@@ -2,6 +2,7 @@
 #include "game/render/KartModel.hh"
 
 #include "game/item/ItemDirector.hh"
+#include "game/item/ItemMath.hh"
 #include "game/item/ItemObjBlueShell.hh"
 #include "game/item/ItemObjBobOmb.hh"
 #include "game/item/ItemTrail.hh"
@@ -69,18 +70,6 @@ constexpr KCLTypeMask KCL_ITEM_SOLID = 0x20E80FFF;
 constexpr KCLTypeMask KCL_ITEM_FLOOR_ISH = 0x20E80BFF;
 constexpr KCLTypeMask KCL_ITEM_FALL_BOUNDARY = 0x10000;
 constexpr KCLTypeMask KCL_ITEM_MOVING_WATER = 0x40000000;
-
-/// @addr{0x807872C0}
-/// @brief The game's normalise-into helper: writes the unit vector only when the input is not 0.
-bool NormaliseInto(EGG::Vector3f &out, const EGG::Vector3f &in) {
-    f32 sq = in.ps_squareMag();
-    if (sq > 0.0f) {
-        out = in * EGG::Mathf::frsqrt(sq);
-        return true;
-    }
-
-    return false;
-}
 
 } // namespace
 

@@ -1,6 +1,7 @@
 #include "ItemTrail.hh"
 
 #include "game/item/ItemDirector.hh"
+#include "game/item/ItemMath.hh"
 #include "game/item/KartItem.hh"
 
 #include "game/field/BoxColManager.hh"
@@ -15,24 +16,13 @@ namespace Kinoko::Item {
 
 namespace {
 
-/// @addr{0x807872C0}
-bool NormaliseInto(EGG::Vector3f &out, const EGG::Vector3f &in) {
-    f32 sq = in.ps_squareMag();
-    if (sq > 0.0f) {
-        out = in * EGG::Mathf::frsqrt(sq);
-        return true;
-    }
-
-    return false;
-}
-
 /// @addr{0x807912E0}
-/// @brief Makes right / up / forward orthonormal again, keeping up.
+/// @brief Makes right / up / forward orthonormal again, keeping up (PSVECNormalize and PSVECCrossProduct).
 void Orthonormalise(std::array<EGG::Vector3f, 4> &basis) {
     NormaliseInto(basis[1], basis[1]);
-    basis[0] = basis[1].cross(basis[2]);
+    basis[0] = basis[1].ps_cross(basis[2]);
     NormaliseInto(basis[0], basis[0]);
-    basis[2] = basis[0].cross(basis[1]);
+    basis[2] = basis[0].ps_cross(basis[1]);
 }
 
 /// @brief Status bits 32 (in an action), 47 and 54 (zipper and trick rotation): the game's
@@ -40,6 +30,16 @@ void Orthonormalise(std::array<EGG::Vector3f, 4> &basis) {
 bool IsBusy(const Kart::KartObjectProxy &proxy) {
     return proxy.status().onBit(Kart::eStatus::InAction, Kart::eStatus::ZipperTrick,
             Kart::eStatus::TrickRot);
+}
+
+/// @brief `v += (target - v) * rate` with the multiply and add fused per component, as the game's paired-single
+/// code does it (`ps_sub` then `ps_madds0`): the trail's up blend (0x80791EBC) and the wall offsets (0x80792984,
+/// 0x80793C7C, 0x807944A0).
+void LerpFused(EGG::Vector3f &v, const EGG::Vector3f &target, f32 rate) {
+    EGG::Vector3f diff = target - v;
+    v.x = EGG::Mathf::fma(diff.x, rate, v.x);
+    v.y = EGG::Mathf::fma(diff.y, rate, v.y);
+    v.z = EGG::Mathf::fma(diff.z, rate, v.z);
 }
 
 } // namespace
@@ -72,7 +72,10 @@ void ItemTrail::init(KartItem *kartItem, size_t playerIdx) {
     m_trailDistShort = m_trailDist * (isBike() ? BIKE_SHORT : KART_SHORT);
     m_trailHeightOfs = stats.itemUnk178;
     m_trailUpOfs = stats.itemUnk17c;
-    m_scale = EGG::Vector3f(1.0f, 1.0f, 1.0f);
+    // Neither the constructor (0x80791760) nor this sets the scale: it is zero until the first
+    // calcKartPose, which takes the forward offset (0x80791FD0) with the old scale. So the first
+    // item of the race is placed without that offset on its first frame.
+    m_scale = EGG::Vector3f::zero;
     reset();
 }
 
@@ -208,7 +211,7 @@ bool ItemTrail::calcKartPose() {
 
     const auto *kartMove = move();
     EGG::Vector3f up = IsBusy(*this) ? bodyUp() : kartMove->smoothedUp();
-    m_pose[1] += (up - m_pose[1]) * UP_RATE;
+    LerpFused(m_pose[1], up, UP_RATE);
     m_pose[2] = bodyFront();
     Orthonormalise(m_pose);
 
@@ -219,9 +222,10 @@ bool ItemTrail::calcKartPose() {
     // object never sets in a race; only the decay is ported.
     m_bob *= BOB_DECAY;
 
+    // The bob is added before the forward offset (0x80791FDC).
     f32 ofs = m_trailUpOfs * m_scale.z;
-    m_pose[3] += m_pose[2] * ofs;
     m_pose[3].y += m_bob;
+    m_pose[3] += m_pose[2] * ofs;
     m_posDelta = m_pose[3] - prev;
 
     m_velocity = velocity();
@@ -325,7 +329,8 @@ void ItemTrail::calcTrailPos() {
     }
     m_liftDelta = m_lift - prevLift;
 
-    f32 height = obj->m_kclRadius + (m_lift - m_hopHeight) + m_trailHeightOfs * m_scale.y;
+    // Grouped as the game adds it (0x807928E0..0x80792918); left to right rounds differently.
+    f32 height = obj->m_kclRadius + ((m_lift - m_hopHeight) + m_trailHeightOfs * m_scale.y);
     obj->m_pos = m_trailAnchor + m_pose[1] * height;
 
     obj->m_colInfo.bbox.setZero();
@@ -334,7 +339,7 @@ void ItemTrail::calcTrailPos() {
     if (!hit) {
         m_trailOffsets[0] *= OFFSET_DECAY;
     } else {
-        m_trailOffsets[0] += (obj->m_colInfo.tangentOff - m_trailOffsets[0]) * OFFSET_RATE;
+        LerpFused(m_trailOffsets[0], obj->m_colInfo.tangentOff, OFFSET_RATE);
     }
 
     obj->m_pos += m_trailOffsets[0];
@@ -557,7 +562,7 @@ void ItemTrail::calcChain() {
     u32 ringIdx = 0;
     if (m_count > 1) {
         if (m_movingForward) {
-            swing = (m_chainPrevDir - m_trailDir) * (SWING * m_speedRatio * m_speedRatio);
+            swing = (m_chainPrevDir - m_trailDir) * (SWING * (m_speedRatio * m_speedRatio));
         }
 
         m_chainPrevDir = m_trailDir;
@@ -613,11 +618,8 @@ void ItemTrail::calcChain() {
         }
 
         EGG::Vector3f d = link - prevLink;
-        EGG::Vector3f n;
-        f32 dist = d.length();
-        if (dist > 0.0f) {
-            n = d * (1.0f / dist);
-        }
+        EGG::Vector3f n = EGG::Vector3f::zero;
+        f32 dist = NormaliseLength(n, d);
 
         if (dist > spacing) {
             link = prevLink + n * spacing;
@@ -627,8 +629,9 @@ void ItemTrail::calcChain() {
         }
         // The objects' model bases (lerped towards the one before) are visual.
 
-        f32 height = (lift - m_hopHeight) * liftScale + obj->m_kclRadius +
-                m_trailHeightOfs * m_scale.y;
+        // Grouped as the game adds it (0x80793C04..0x80793C14).
+        f32 height = (lift - m_hopHeight) * liftScale +
+                (obj->m_kclRadius + m_trailHeightOfs * m_scale.y);
         obj->m_pos = link + m_pose[1] * height;
 
         obj->m_colInfo.bbox.setZero();
@@ -638,7 +641,7 @@ void ItemTrail::calcChain() {
         if (!hit) {
             ofs *= OFFSET_DECAY;
         } else {
-            ofs += (obj->m_colInfo.tangentOff - ofs) * OFFSET_RATE;
+            LerpFused(ofs, obj->m_colInfo.tangentOff, OFFSET_RATE);
         }
 
         obj->m_pos += ofs;
@@ -708,8 +711,9 @@ void ItemTrail::calcOrbit() {
     }
 
     m_orbitLift = (m_orbitLift + HOP_LIFT * m_hopHeight) * LIFT_DECAY;
-    f32 height = m_objs[0]->m_kclRadius + (m_orbitLift - m_hopHeight) +
-            m_trailHeightOfs * m_scale.y;
+    // Grouped as the game adds it (0x807947C0..0x807947FC).
+    f32 height = m_objs[0]->m_kclRadius +
+            ((m_orbitLift - m_hopHeight) + m_trailHeightOfs * m_scale.y);
     m_orbitRadiusSide += RADIUS_RATE *
             (m_scale.z * (m_trailHeight + RADIUS_BASE) - m_orbitRadiusSide);
     m_orbitRadiusFwd += RADIUS_RATE * (m_scale.x * (m_trailDist + RADIUS_BASE) - m_orbitRadiusFwd);
@@ -733,7 +737,7 @@ void ItemTrail::calcOrbit() {
 /// of the course.
 void ItemTrail::calcOrbitPositions() {
     constexpr f32 COS120 = -0.5f;
-    constexpr f32 SIN120 = 0.866f;
+    constexpr f32 SIN120 = 0.8660254f; // 0x3F5DB3D7, not 0.866f
     constexpr f32 OFFSET_DECAY = 0.9f;
     constexpr f32 OFFSET_RATE = 0.2f;
 
@@ -770,7 +774,7 @@ void ItemTrail::calcOrbitPositions() {
         if (!hit) {
             ofs *= OFFSET_DECAY;
         } else {
-            ofs += (obj->m_colInfo.tangentOff - ofs) * OFFSET_RATE;
+            LerpFused(ofs, obj->m_colInfo.tangentOff, OFFSET_RATE);
         }
 
         obj->m_pos += ofs;

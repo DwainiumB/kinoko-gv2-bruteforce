@@ -1,6 +1,7 @@
 #include "ItemObjKoura.hh"
 
 #include "game/item/ItemDirector.hh"
+#include "game/item/ItemMath.hh"
 #include "game/item/ItemTrail.hh"
 #include "game/item/KartItem.hh"
 
@@ -20,27 +21,6 @@ namespace {
 constexpr KCLTypeMask KCL_ITEM_SOLID = 0x20E80FFF;
 constexpr KCLTypeMask KCL_ITEM_WALL = 0xD010F000;
 constexpr u8 NO_PLAYER = 12;
-
-/// @addr{0x807872C0}
-bool NormaliseInto(EGG::Vector3f &out, const EGG::Vector3f &in) {
-    f32 sq = in.ps_squareMag();
-    if (sq > 0.0f) {
-        out = in * EGG::Mathf::frsqrt(sq);
-        return true;
-    }
-
-    return false;
-}
-
-/// @addr{0x80793F04}
-f32 NormaliseLength(EGG::Vector3f &out, const EGG::Vector3f &in) {
-    f32 mag = in.length();
-    if (mag > 0.0f) {
-        out = in * (1.0f / mag);
-    }
-
-    return mag;
-}
 
 const Kart::KartObject *Kart(u8 idx) {
     return Kart::KartObjectManager::Instance()->object(idx);

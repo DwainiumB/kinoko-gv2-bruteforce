@@ -1,5 +1,6 @@
 #include "ItemObjKoura.hh"
 
+#include "game/item/ItemMath.hh"
 #include "game/item/ItemTrail.hh"
 #include "game/item/KartItem.hh"
 
@@ -17,30 +18,6 @@ namespace {
 
 constexpr KCLTypeMask KCL_ITEM_SOLID = 0x20E80FFF;
 constexpr KCLTypeMask KCL_ITEM_WALL = 0xD010F000;
-
-/// @addr{0x80793F04}
-/// @brief Normalises in place and returns the length (0 and unchanged when too short).
-f32 NormaliseLength(EGG::Vector3f &out, const EGG::Vector3f &in) {
-    f32 sq = in.ps_squareMag();
-    if (sq > 0.0f) {
-        f32 inv = EGG::Mathf::frsqrt(sq);
-        out = in * inv;
-        return sq * inv;
-    }
-
-    return 0.0f;
-}
-
-/// @addr{0x807872C0}
-bool NormaliseInto(EGG::Vector3f &out, const EGG::Vector3f &in) {
-    f32 sq = in.ps_squareMag();
-    if (sq > 0.0f) {
-        out = in * EGG::Mathf::frsqrt(sq);
-        return true;
-    }
-
-    return false;
-}
 
 } // namespace
 
