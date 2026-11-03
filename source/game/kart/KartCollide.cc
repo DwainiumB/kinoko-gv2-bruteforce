@@ -565,8 +565,8 @@ void KartCollide::calcBoundingRadius() {
 
 /// @addr{0x8057257C}
 /// @brief Items touching the kart start their hit action (shell, fake item box: action 2, banana:
-/// action 0; none in a mega mushroom). Sounds, hit statistics, battle scoring, team checks and the
-/// ghost case (status bit 131) are left out.
+/// action 0; none in a mega mushroom; a mushroom or star is used). Sounds, hit statistics, battle
+/// scoring, team checks and the ghost case (status bit 131) are left out.
 void KartCollide::calcItemCollision() {
     std::array<Item::ItemObj *, Item::ItemDirector::MAX_KART_HITS> hits;
     const auto *kart = Kart::KartObjectManager::Instance()->object(param()->playerIdx());
@@ -586,6 +586,14 @@ void KartCollide::calcItemCollision() {
         case Item::ItemObjKind::Banana:
             // 0x80573178
             newAction = status.onBit(eStatus::InMega) ? Action::None : Action::UNK_0;
+            break;
+        case Item::ItemObjKind::Mushroom:
+            // 0x805731E0
+            Item::ItemDirector::Instance()->kartItem(param()->playerIdx()).activateMushroom();
+            break;
+        case Item::ItemObjKind::Star:
+            // 0x80573224
+            move()->activateStar();
             break;
         case Item::ItemObjKind::BlueShell:
             // 0x805731B0

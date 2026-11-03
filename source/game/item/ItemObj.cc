@@ -372,7 +372,8 @@ void ItemObj::onKartHit(const Kart::KartObject *kart, bool skip) {
     }
 
     if (!props.breaksOnKartHit) {
-        // 0x807A6EC8: the item is pushed away instead (mushroom, star). Not ported.
+        // 0x807A6EC8: the kart takes it (mushroom, star). The online event is left out.
+        startPickup();
         return;
     }
 
@@ -463,6 +464,25 @@ void ItemObj::startVanish(bool /*notify*/) {
     }
 
     m_vanishTimer = m_vanishBelow ? 30 : 6;
+}
+
+/// @addr{0x807A6D88}
+/// @brief A kart took this item: it goes away on its next frame. The online path (+0x7C bit 5)
+/// is left out.
+void ItemObj::startPickup() {
+    // 0x8079D920 is visual.
+    if (m_flags.onBit(eFlags::Breaking, eFlags::Vanishing)) {
+        return;
+    }
+
+    m_state = &ItemObj::calcPickedUp;
+    m_frameFlags.setBit(eFrameFlags::Vanishing);
+    m_flags.setBit(eFlags::Vanishing);
+}
+
+/// @addr{0x807A6F44}
+void ItemObj::calcPickedUp() {
+    ItemDirector::Instance()->holder(m_kind).despawn(this);
 }
 
 /// @addr{0x807A6700}

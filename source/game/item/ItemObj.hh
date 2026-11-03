@@ -245,6 +245,8 @@ protected:
 
     void calcBreaking();
     void calcVanishing();
+    void startPickup();
+    void calcPickedUp();
     void calcDropped();
     void calcLanded();
     void onDroppedWall(const EGG::Vector3f &nrm);

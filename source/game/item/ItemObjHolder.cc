@@ -6,6 +6,7 @@
 #include "game/item/ItemObjBobOmb.hh"
 #include "game/item/ItemObjFakeItemBox.hh"
 #include "game/item/ItemObjKoura.hh"
+#include "game/item/ItemObjMushroom.hh"
 #include "game/item/ItemObjRed.hh"
 #include "game/item/ItemObjThunderCloud.hh"
 
@@ -203,6 +204,10 @@ ItemObj *ItemObjHolder::Create(ItemObjKind kind) {
         return new ItemObjRedShell;
     case ItemObjKind::Banana:
         return new ItemObjBanana;
+    case ItemObjKind::Mushroom:
+        return new ItemObjMushroom;
+    case ItemObjKind::Star:
+        return new ItemObjStar;
     case ItemObjKind::FakeItemBox:
         return new ItemObjFakeItemBox;
     case ItemObjKind::BlueShell:
