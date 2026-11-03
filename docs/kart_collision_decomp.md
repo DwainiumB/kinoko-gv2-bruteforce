@@ -712,3 +712,36 @@ Where a thrown or dropped item starts (`ItemObj::calcRelease` 0x807A25B0 → `Ka
 //   0x807B99D4; jugem+0x2C > 0 -> sound.
 // Other jugem users: 0x80538FEC / 0x805391E4 group respawn points by +0x2A (battle), not ported.
 ```
+
+## Item float rounding: normalise, cross product, trail blends (ninth pass, 2026-11-03)
+
+Found chasing the green shell drift in `test4` (1 to 3 ulps in one position component, starting while held). All of it
+is operation order; the formulas were right.
+
+```c
+// Normalise helpers shared by the item code (now source/game/item/ItemMath.hh):
+//   0x807872C0 NormaliseInto(out, in): sq = fma(z, z, x*x) + y*y; sq > 0 -> out = in * FrSqrt(sq) (0x80085040,
+//     frsqrte + one Newton step); returns whether it normalised.
+//   0x80793F04 NormaliseLength(out, in): mag = PSVECMag(in) (0x8019AC68: the same square, then sqrt as
+//     sq * FrSqrt(sq)); mag > 0 -> out = in * (1 / mag), a true division. Used by the shells and the chain links.
+// PSVECNormalize 0x8019AC24: same square and the same Newton step inline, no zero check.
+// PSVECCrossProduct 0x8019ACCC (a x b): x = fms(a.y, b.z, b.y*a.z); y = -fms(a.x, b.z, b.x*a.z);
+//   z = -fms(a.y, b.x, b.y*a.x), each with one rounded product -> EGG::Vector3f::ps_cross.
+// ItemTrail::Orthonormalise 0x807912E0: PSVECNormalize(up); right = PSVECCrossProduct(up, fwd);
+//   PSVECNormalize(right); fwd = PSVECCrossProduct(right, up).
+// ItemTrail::calcKartPose 0x80791E5C: up += (target - up) * 0.2 as ps_sub + ps_madds0 (fused); target = bodyUp
+//   (pose column 1) when busy, else KartMove +0x38 (smoothedUp). fwd = pose column 2; Orthonormalise; old pose[3] kept
+//   at +0x9C; pose[3] = getPos(); bob (+0xCC) decays (x 0.85) or, with status bit 29, eases to the wheelie lift;
+//   ofs = trailUpOfs (+0xE0) * scale.z (+0xB8, the scale from before this call); pose[3].y += bob, then
+//   pose[3] += fwd * ofs; posDelta (+0x9C) = pose[3] - old. The scale (+0xB0) is only updated after this, and the
+//   constructor (0x80791760) and init (0x80791840) never set it, so it is 0 on the race's first use.
+// ItemTrail::calcTrailPos 0x80792618 (single), calcChain 0x8079356C, calcOrbit 0x80794694:
+//   wall offset on a sphere hit: ofs += (tangentOff - ofs) * 0.2, ps_sub + ps_madds0 (fused); no hit: ofs *= 0.9.
+//   hover height: single / orbit kcl + ((lift - hop) + heightOfs * scale.y);
+//                 chain (lift - hop) * liftScale + (kcl + heightOfs * scale.y).
+//   chain swing scale: 110 * (speedRatio * speedRatio).
+// ItemTrail::calcOrbitPositions 0x807941F0: slot constants cos120 = -0.5, sin120 = 0.8660254 (0x3F5DB3D7).
+```
+
+**Measured**: `test4` items 13,004 -> 15,387 of 15,400 bit-exact (the rest are 13 throw frames), `test3` items
+10,366 -> 10,638 of 11,435, `test5` 10,777 of 10,777, no kart differences, 13/13 suite, 56/56 ghosts.
