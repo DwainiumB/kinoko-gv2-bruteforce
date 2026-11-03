@@ -87,9 +87,17 @@ void ObjectCollidable::processKartReactions(Kart::KartObject *kartObj,
         }
     }
 
-    // Process the reaction on object
-    if (reactionOnObj == Kart::Reaction::UNK_3 || reactionOnObj == Kart::Reaction::UNK_4) {
-        reactionOnObj = Kart::Reaction::None;
+    // Process the reaction on object: Time Trials and online races drop 3 and 4, other offline
+    // races turn 5 and 6 into 3 and 4 (ObjectDirector +0x54 / +0x55).
+    const auto *objectDirector = ObjectDirector::Instance();
+    if (objectDirector->isOnline() || objectDirector->isTimeTrial()) {
+        if (reactionOnObj == Kart::Reaction::UNK_3 || reactionOnObj == Kart::Reaction::UNK_4) {
+            reactionOnObj = Kart::Reaction::None;
+        }
+    } else if (reactionOnObj == Kart::Reaction::UNK_5) {
+        reactionOnObj = Kart::Reaction::UNK_3;
+    } else if (reactionOnObj == Kart::Reaction::UNK_6) {
+        reactionOnObj = Kart::Reaction::UNK_4;
     }
 }
 

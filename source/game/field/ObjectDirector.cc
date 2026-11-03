@@ -149,7 +149,13 @@ ObjectDirector::ObjectDirector()
     : m_flowTable("ObjFlow.bin"), m_hitTableKart("GeoHitTableKart.bin"),
       m_hitTableKartObject("GeoHitTableKartObj.bin"), m_objects(MAX_UNIT_COUNT),
       m_calcObjects(MAX_UNIT_COUNT), m_collisionObjects(MAX_UNIT_COUNT), m_psea(nullptr),
-      m_managedObjects(MAX_MANAGED_OBJECTS) {}
+      m_managedObjects(MAX_MANAGED_OBJECTS) {
+    using GameMode = System::RaceConfig::Scenario::GameMode;
+
+    GameMode mode = System::RaceConfig::Instance()->raceScenario().gameMode;
+    m_online = static_cast<s32>(mode) >= static_cast<s32>(GameMode::Online_Private_Versus);
+    m_timeTrial = mode == GameMode::Time_Trial || mode == GameMode::Ghost_Race;
+}
 
 /// @addr{0x8082A694}
 ObjectDirector::~ObjectDirector() {

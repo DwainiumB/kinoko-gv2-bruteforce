@@ -16,6 +16,7 @@ enum class Reaction {
     UNK_3 = 3,
     UNK_4 = 4,
     UNK_5 = 5,
+    UNK_6 = 6,
     UNK_7 = 7,
     WallAllSpeed = 8,
     SpinAllSpeed = 9,

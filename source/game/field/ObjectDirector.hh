@@ -78,6 +78,16 @@ public:
         return m_psea;
     }
 
+    /// @brief Online race: game mode 7 or higher (offset 0x54).
+    [[nodiscard]] bool isOnline() const {
+        return m_online;
+    }
+
+    /// @brief Time Trial or ghost race (offset 0x55). Several objects behave differently then.
+    [[nodiscard]] bool isTimeTrial() const {
+        return m_timeTrial;
+    }
+
     [[nodiscard]] f32 distAboveRisingWater(f32 offset) const;
     [[nodiscard]] f32 risingWaterKillPlaneHeight() const;
 
@@ -118,6 +128,8 @@ private:
     std::array<Kart::Reaction, MAX_UNIT_COUNT> m_reactions;
     ObjectPsea *m_psea;
     fixed_vector<ObjectCollidable *> m_managedObjects;
+    bool m_online;
+    bool m_timeTrial;
 
     static f32 s_wanwanMaxPitch; ///< @addr{0x808C70E8}
 
