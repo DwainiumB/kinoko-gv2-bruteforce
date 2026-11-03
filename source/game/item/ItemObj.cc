@@ -97,6 +97,7 @@ ItemObj::ItemObj()
     m_flags.makeAllZero();
     m_flags2.makeAllZero();
     m_colInfo.bbox.setZero();
+    m_vel.setZero();
 }
 
 ItemObj::~ItemObj() = default;
@@ -155,7 +156,9 @@ void ItemObj::resetForSpawn(ItemObjKind kind) {
     m_basis[1] = EGG::Vector3f::ey;
     m_basis[2] = EGG::Vector3f::ez;
     m_up = EGG::Vector3f::ey;
-    m_vel.setZero();
+    // The velocity is not reset: a reused object keeps its last one, and an object dropped from a
+    // course object or a kart adds its drop velocity to it (seen when a mushroom that fell off the
+    // course came back from a wooden box).
     m_frame = 0;
     m_trailFrame = 0;
     m_breakTimer = 0;
