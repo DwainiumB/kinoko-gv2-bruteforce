@@ -1,7 +1,9 @@
 #include <Common.hh>
 #include <cmath>
+#include <new>
 #include <emscripten/emscripten.h>
 
+#include "host/Context.hh"
 #include "host/SceneCreatorDynamic.hh"
 #include <egg/core/ExpHeap.hh>
 #include <egg/core/SceneManager.hh>
@@ -33,21 +35,43 @@ static int s_cpuCount = 0;
 static int s_cpuCharacter[11], s_cpuVehicle[11];
 static s32 s_characterId = 0x00;
 static s32 s_vehicleId = 0x08;
+/// Drift mode of the local player (false = manual). kinoko_init_tas sets it from the ghost header.
+static bool s_driftIsAuto = false;
 
 /// A ghost's .rkg bytes, zero-padded: Kinoko's RawGhostFile reads a full 0x2800 bytes even when the
 /// file is compressed and shorter. When set, the race replays this ghost instead of a local player.
 static u8 s_ghostFile[sizeof(System::RawGhostFile)];
 static bool s_ghostMode = false;
 
+/// VS race options from kinoko_set_vs_options: engine class (0 = 50cc, 1 = 100cc, 2 = 150cc) and
+/// each player's 1-based starting grid place (0 = player index + 1).
+static int s_engineClass = 2;
+static u8 s_startPlacement[12];
+
+/// Item options from kinoko_set_item_options: RaceManager's two random seeds (they decide the
+/// items: every client of a lockstep race must use the same ones), the item mode, and which
+/// players get the player odds (bit i = player i; the others get the CPU odds).
+static u32 s_seed1 = 0x74A1B095;
+static u32 s_seed2 = 0;
+static int s_itemMode = 0;
+static u32 s_humanMask = 1;
+
 static void OnRaceConfigInit(System::RaceConfig *config, void *) {
     if (s_ghostMode) {
         // Same setup as KReplaySystem: the course, character, vehicle and inputs come from the file
         config->setGhost(s_ghostFile);
         config->raceScenario().players[0].type = System::RaceConfig::Player::Type::Ghost;
+        config->raceScenario().gameMode = System::RaceConfig::Scenario::GameMode::Time_Trial;
         return;
     }
 
     auto &scenario = config->raceScenario();
+    // A race without CPUs is a Time Trial (starting triple mushrooms, no item roulette).
+    scenario.gameMode = s_cpuCount > 0 ? System::RaceConfig::Scenario::GameMode::Versus :
+                                         System::RaceConfig::Scenario::GameMode::Time_Trial;
+    scenario.itemMode = static_cast<System::RaceConfig::Scenario::ItemMode>(s_itemMode);
+    scenario.seed1 = s_seed1;
+    scenario.seed2 = s_seed2;
     scenario.course = static_cast<Course>(s_courseId);
     scenario.playerCount = static_cast<u8>(1 + s_cpuCount);
 
@@ -55,18 +79,26 @@ static void OnRaceConfigInit(System::RaceConfig *config, void *) {
     player.type = System::RaceConfig::Player::Type::Local;
     player.character = static_cast<Character>(s_characterId);
     player.vehicle = static_cast<Vehicle>(s_vehicleId);
-    player.driftIsAuto = false;
+    player.driftIsAuto = s_driftIsAuto;
 
     for (int i = 0; i < s_cpuCount; ++i) {
         auto &cpu = scenario.players[1 + i];
-        cpu.type = System::RaceConfig::Player::Type::Cpu;
+        cpu.type = (s_humanMask >> (1 + i)) & 1 ? System::RaceConfig::Player::Type::Local :
+                                                   System::RaceConfig::Player::Type::Cpu;
         cpu.character = static_cast<Character>(s_cpuCharacter[i]);
         cpu.vehicle = static_cast<Vehicle>(s_cpuVehicle[i]);
         cpu.driftIsAuto = false;
     }
+
+    scenario.engineClass = static_cast<System::RaceConfig::Scenario::EngineClass>(s_engineClass);
+    for (size_t i = 0; i < scenario.players.size(); ++i) {
+        scenario.players[i].startPlacement = s_startPlacement[i];
+    }
 }
 
 extern "C" {
+
+void kinoko_set_vs_options(int engineClass, const int *placements, int count);
 
 static void StartScene() {
     if (!s_rootHeap) {
@@ -85,12 +117,29 @@ static void StartScene() {
 
 EMSCRIPTEN_KEEPALIVE
 void kinoko_init(int courseId, int characterId, int vehicleId) {
+    kinoko_set_vs_options(2, nullptr, 0);
     s_cpuCount = 0;
     s_focus = 0;
     s_courseId = courseId;
     s_characterId = characterId;
     s_vehicleId = vehicleId;
     s_ghostMode = false;
+    s_driftIsAuto = false;
+    StartScene();
+}
+
+/// Same as kinoko_init, but the drift mode is passed through (1 = automatic, 0 = manual). TAS mode
+/// uses the drift flag of the ghost it was loaded from (RKG byte 0xD), otherwise nothing matches.
+EMSCRIPTEN_KEEPALIVE
+void kinoko_init_tas(int courseId, int characterId, int vehicleId, int driftIsAuto) {
+    kinoko_set_vs_options(2, nullptr, 0);
+    s_cpuCount = 0;
+    s_focus = 0;
+    s_courseId = courseId;
+    s_characterId = characterId;
+    s_vehicleId = vehicleId;
+    s_ghostMode = false;
+    s_driftIsAuto = driftIsAuto != 0;
     StartScene();
 }
 
@@ -110,7 +159,98 @@ void kinoko_init_vs(int courseId, int characterId, int vehicleId, int cpuCount,
     s_characterId = characterId;
     s_vehicleId = vehicleId;
     s_ghostMode = false;
+    s_driftIsAuto = false;
     StartScene();
+}
+
+/// Sets the options of the next kinoko_init_vs race: engine class (0 = 50cc, 1 = 100cc,
+/// 2 = 150cc) and, when placements is not null, each of count players' 1-based starting grid place
+/// (0 = player index + 1). Time Trials always run at 150cc from index places.
+EMSCRIPTEN_KEEPALIVE
+void kinoko_set_vs_options(int engineClass, const int *placements, int count) {
+    s_engineClass = engineClass < 0 ? 0 : (engineClass > 2 ? 2 : engineClass);
+    for (int i = 0; i < 12; ++i) {
+        s_startPlacement[i] = placements && i < count ? static_cast<u8>(placements[i]) : 0;
+    }
+}
+
+/// Gives player idx an item (game ids: 0 green shell, 2 banana, 4 mushroom, 8 lightning, 9 star,
+/// 10 golden mushroom, 11 mega mushroom, ...), as an item box would. Green shells and bananas are
+/// held on the item button and thrown on release; see ITEM_OBJECTS_RESULT.md.
+EMSCRIPTEN_KEEPALIVE
+void kinoko_set_player_item(int idx, int itemId) {
+    auto *itemDir = Item::ItemDirector::Instance();
+    if (!itemDir || idx < 0 || idx > s_cpuCount || itemId < 0 || itemId > 0x12) {
+        return;
+    }
+
+    itemDir->kartItem(static_cast<size_t>(idx)).inventory().setItem(static_cast<Item::ItemId>(itemId));
+}
+
+/// Sets the item options of the next kinoko_init_vs race: RaceManager's random seeds, the item
+/// mode (0 balanced, 1 frantic, 2 strategic, 3 none) and the players with player odds (bit i =
+/// player i, default 1). Player 0 always gets the player odds.
+EMSCRIPTEN_KEEPALIVE
+void kinoko_set_item_options(u32 seed1, u32 seed2, int itemMode, u32 humanMask) {
+    s_seed1 = seed1;
+    s_seed2 = seed2;
+    s_itemMode = itemMode < 0 ? 0 : (itemMode > 3 ? 3 : itemMode);
+    s_humanMask = humanMask | 1;
+}
+
+/// The item player idx holds: (item id << 8) | count (item 20 = none). -1 for a bad index.
+EMSCRIPTEN_KEEPALIVE
+int kinoko_get_player_item(int idx) {
+    auto *itemDir = Item::ItemDirector::Instance();
+    if (!itemDir || idx < 0 || idx > s_cpuCount) {
+        return -1;
+    }
+
+    const auto &inventory = itemDir->kartItem(static_cast<size_t>(idx)).inventory();
+    return (static_cast<int>(inventory.id()) << 8) | (inventory.currentCount() & 0xFF);
+}
+
+/// The item roulette of player idx: (state << 8) | shown item (state 0 idle, 1 spinning,
+/// 2 stopping; item 20 = none). -1 for a bad index.
+EMSCRIPTEN_KEEPALIVE
+int kinoko_get_roulette(int idx) {
+    auto *itemDir = Item::ItemDirector::Instance();
+    if (!itemDir || idx < 0 || idx > s_cpuCount) {
+        return -1;
+    }
+
+    const auto &roulette = itemDir->kartItem(static_cast<size_t>(idx)).roulette();
+    return (static_cast<int>(roulette.state()) << 8) | static_cast<int>(roulette.shownItem());
+}
+
+/// Writes up to max item objects (shells, bananas: the ported kinds) as 8 floats each: kind
+/// (0 green shell, 2 banana), owner, held behind the owner (1/0), x, y, z, scale, hit radius.
+/// Returns how many were written.
+EMSCRIPTEN_KEEPALIVE
+int kinoko_get_item_objects(float *out, int max) {
+    auto *itemDir = Item::ItemDirector::Instance();
+    if (!itemDir || !out) {
+        return 0;
+    }
+
+    int n = 0;
+    for (size_t k = 0; k < static_cast<size_t>(Item::ItemObjKind::Count); ++k) {
+        auto &holder = itemDir->holder(static_cast<Item::ItemObjKind>(k));
+        for (s32 i = 0; i < holder.spawnedCount() && n < max; ++i, ++n) {
+            const Item::ItemObj *obj = holder.obj(i);
+            float *o = out + n * 8;
+            o[0] = static_cast<float>(k);
+            o[1] = static_cast<float>(obj->owner());
+            o[2] = obj->isTrailing() ? 1.0f : 0.0f;
+            o[3] = obj->pos().x;
+            o[4] = obj->pos().y;
+            o[5] = obj->pos().z;
+            o[6] = obj->scale();
+            o[7] = obj->hitRadius();
+        }
+    }
+
+    return n;
 }
 
 /// The number of racers (1 in Time Trials).
@@ -160,6 +300,88 @@ void kinoko_set_input(int buttons, float stickX, float stickY, int trick) {
     EGG::Vector2f stick(stickX, stickY);
     padDir->hostController()->setInputs(static_cast<u16>(buttons), stick,
             static_cast<System::Trick>(trick));
+}
+
+/// Snapshot slots (TAS mode keyframes and user save states). The table must live outside the game
+/// heap: operator new is the EGG heap that a restore overwrites, so each Context is malloc'd with
+/// placement new (Context itself mallocs its copy) and the table is static storage.
+static constexpr int MAX_STATES = 1024;
+static constexpr int DEFAULT_STATE_BYTES = 1 << 20;
+static Host::Context *s_states[MAX_STATES];
+
+static void ReleaseState(int id) {
+    if (s_states[id]) {
+        s_states[id]->~Context();
+        free(s_states[id]);
+        s_states[id] = nullptr;
+    }
+}
+
+/// Snapshots the live game into slot id (0..1023), keeping the first `bytes` of the game heap
+/// (bytes <= 0: the default, 1 MiB; at most the whole 64 MiB heap). Replaces what the slot held.
+/// Returns 1, or 0 on a bad id or when there is no race.
+EMSCRIPTEN_KEEPALIVE
+int kinoko_save_state(int id, int bytes) {
+    if (id < 0 || id >= MAX_STATES || !s_sceneMgr || !System::RaceManager::Instance() ||
+            !s_rootHeap) {
+        return 0;
+    }
+
+    size_t n = bytes <= 0 ? static_cast<size_t>(DEFAULT_STATE_BYTES) : static_cast<size_t>(bytes);
+    if (n > MEMORY_SPACE_SIZE) {
+        n = MEMORY_SPACE_SIZE;
+    }
+
+    ReleaseState(id);
+    void *mem = malloc(sizeof(Host::Context));
+    if (!mem) {
+        return 0;
+    }
+    s_states[id] = new (mem) Host::Context(n);
+    return 1;
+}
+
+/// Restores slot id (Host::Context::SetActiveContext). Returns 1, or 0 for an empty / bad slot.
+EMSCRIPTEN_KEEPALIVE
+int kinoko_load_state(int id) {
+    if (id < 0 || id >= MAX_STATES || !s_states[id]) {
+        return 0;
+    }
+
+    Host::Context::SetActiveContext(*s_states[id]);
+    return 1;
+}
+
+EMSCRIPTEN_KEEPALIVE
+void kinoko_free_state(int id) {
+    if (id >= 0 && id < MAX_STATES) {
+        ReleaseState(id);
+    }
+}
+
+EMSCRIPTEN_KEEPALIVE
+void kinoko_free_all_states() {
+    for (int i = 0; i < MAX_STATES; ++i) {
+        ReleaseState(i);
+    }
+}
+
+/// Debug (like the host's DIRTY command): compares the live game heap with slot id and writes
+/// {differing 4 KiB pages, differing bytes, highest differing offset} to out. Returns 1, or 0 for an
+/// empty slot. Only the bytes the snapshot kept are compared.
+EMSCRIPTEN_KEEPALIVE
+int kinoko_state_dirty(int id, int *out) {
+    if (id < 0 || id >= MAX_STATES || !s_states[id]) {
+        return 0;
+    }
+
+    static size_t perMiB[MEMORY_SPACE_SIZE / (1 << 20)];
+    size_t bytes = 0, last = 0;
+    size_t pages = s_states[id]->CountDifferingPages(perMiB, &bytes, &last);
+    out[0] = static_cast<int>(pages);
+    out[1] = static_cast<int>(bytes);
+    out[2] = static_cast<int>(last);
+    return 1;
 }
 
 EMSCRIPTEN_KEEPALIVE

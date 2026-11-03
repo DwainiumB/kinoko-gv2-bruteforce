@@ -51,7 +51,7 @@ if(EMSCRIPTEN)
         "-sMODULARIZE=1"
         "-sEXPORT_NAME=KinokoModule"
         "-sEXPORTED_RUNTIME_METHODS=['ccall','cwrap','FS','HEAPF32','HEAP32','HEAPU8','getValue']"
-        "-sEXPORTED_FUNCTIONS=['_main','_malloc','_free','_kinoko_init','_kinoko_set_input','_kinoko_step','_kinoko_get_kart_pos','_kinoko_get_kart_rot','_kinoko_get_kart_state','_kinoko_get_race_state','_kinoko_get_timing','_kinoko_init_ghost','_kinoko_get_input','_kinoko_get_guide_point','_kinoko_get_wheels','_kinoko_get_floor','_kinoko_get_object_count','_kinoko_get_objects']"
+        "-sEXPORTED_FUNCTIONS=['_main','_malloc','_free','_kinoko_init','_kinoko_set_input','_kinoko_step','_kinoko_get_kart_pos','_kinoko_get_kart_rot','_kinoko_get_kart_state','_kinoko_get_race_state','_kinoko_get_timing','_kinoko_init_ghost','_kinoko_get_input','_kinoko_get_guide_point','_kinoko_get_wheels','_kinoko_get_floor','_kinoko_get_object_count','_kinoko_get_objects','_kinoko_init_tas','_kinoko_save_state','_kinoko_load_state','_kinoko_free_state','_kinoko_free_all_states','_kinoko_state_dirty']"
         "-sALLOW_MEMORY_GROWTH=1"
         "-sFORCE_FILESYSTEM=1"
         "-sNO_EXIT_RUNTIME=1"
