@@ -32,6 +32,12 @@ public:
         setItemPoint(idx, true);
     }
 
+    /// @brief The kart was put back on the track at a respawn point linked to this item point (0x807B99D4 from
+    /// 0x80584334).
+    void setRespawnItemPoint(u8 idx) {
+        setItemPoint(idx, true);
+    }
+
     void clearBulletFromInventory();
     void loseItem();
     void dropTrail(bool singleOnly);

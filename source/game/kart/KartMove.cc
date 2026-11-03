@@ -400,18 +400,25 @@ void KartMove::calcRespawnStart() {
     constexpr float RESPAWN_HEIGHT = 700.0f;
 
     const auto *jugemPoint = System::RaceManager::Instance()->jugemPoint(param()->playerIdx());
-    const EGG::Vector3f &jugemPos = jugemPoint->pos();
     const EGG::Vector3f &jugemRot = jugemPoint->rot();
 
-    EGG::Vector3f respawnPos = jugemPos;
+    // Each player gets its own spot beside the point outside Time Trials (0x8051896C).
+    EGG::Vector3f respawnPos = jugemPoint->respawnPos(param()->playerIdx());
     respawnPos.y += RESPAWN_HEIGHT;
     EGG::Vector3f respawnRot = EGG::Vector3f(0.0f, jugemRot.y, 0.0f);
 
     setInitialPhysicsValues(respawnPos, respawnRot);
 
-    Item::ItemDirector::Instance()->kartItem(param()->playerIdx()).clear();
+    auto &kartItem = Item::ItemDirector::Instance()->kartItem(param()->playerIdx());
+    kartItem.clear();
 
     status().resetBit(eStatus::TriggerRespawn).setBit(eStatus::InRespawn);
+
+    // The kart's item route point jumps to the one ahead of the respawn point (0x807B99D4).
+    u8 itemPointIdx = jugemPoint->itemPointIdx();
+    if (System::CourseMap::Instance()->getItemPoint(itemPointIdx)) {
+        kartItem.setRespawnItemPoint(itemPointIdx);
+    }
 }
 
 /// @addr{0x80579A50}

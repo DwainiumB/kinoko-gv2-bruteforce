@@ -41,6 +41,11 @@ void CourseMap::init() {
         getItemPoint(i)->initLinks(static_cast<u8>(i));
     }
 
+    // 0x80512AE8: each respawn point learns the item route point ahead of it.
+    for (u16 i = 0; i < getJugemPointCount(); ++i) {
+        getJugemPoint(i)->linkNearestItemPoint();
+    }
+
     MapdataStageInfo *stageInfo = getStageInfo();
     constexpr u8 TRANSLATION_MODE_NARROW = 1;
     if (stageInfo && stageInfo->translationMode() == TRANSLATION_MODE_NARROW) {
