@@ -48,3 +48,28 @@ tools/*.npz
 
 # The old Node/SSE relay; replaced by server/worker (Cloudflare Worker) and no longer compatible with web/online.js
 server/signal.js
+
+# Generated from the player's own kart archives by `kinoko_host item-anchors`; never committed.
+Race/Kart/driverItemAnchors.bin
+
+# Local run output and scratch files: CSV dumps, generated ghosts, logs, editor and page backups
+/_*.csv
+/_*.rkg
+/_*.json
+/roundtrip_test.rkg
+/results.txt
+/stop.flag
+/*.log
+/new 2.py
+web/*.zip
+web/index.html.bak-*
+*.bak-*
+samples/_editor_tmp.rkg
+
+# Game-derived or very large local data; never committed
+samples/data/
+samples/tracks/
+Race/
+
+# Claude Code local settings
+.claude/
