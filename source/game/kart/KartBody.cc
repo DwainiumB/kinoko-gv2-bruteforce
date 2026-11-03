@@ -7,6 +7,9 @@ namespace Kinoko::Kart {
 /// @addr{0x8056C394}
 KartBody::KartBody(KartPhysics *physics) : m_physics(physics) {
     m_anAngle = 0.0f;
+    m_matrix = EGG::Matrix34f::ident;
+    m_rumbleCounter = 0;
+    m_rumbleStarted = false;
     m_sinkDepth = 0.0f;
     m_targetSinkDepth = 0.0f;
 }
@@ -25,6 +28,33 @@ void KartBody::reset() {
     m_anAngle = 0.0f;
     m_sinkDepth = 0.0f;
     m_targetSinkDepth = 0.0f;
+}
+
+/// @addr{0x8056CE98}
+/// @brief The body's world matrix: the pose moved up and down by the engine rumble, a sine of a
+/// counter that advances by the BSP's rumble speed every frame (one turn per 65536) scaled by the
+/// BSP's rumble height and the kart's scale. The game runs this in `PlayerSub_updateTransforms`
+/// (0x8059783C), between the physics pass and the model update. The counter is never reset; the
+/// game's body runs one update more than Kinoko before the first simulated frame, so the first
+/// call advances it twice.
+void KartBody::calcMatrix() {
+    constexpr f32 COUNTER_TO_FIDX = 0.00390625f; // 1 / 256: one full turn per 65536 counts
+
+    u16 speed = bsp().rumbleSpeed;
+    if (!m_rumbleStarted) {
+        m_rumbleStarted = true;
+        m_rumbleCounter = static_cast<u16>(m_rumbleCounter + speed);
+    }
+    m_rumbleCounter = static_cast<u16>(m_rumbleCounter + speed);
+
+    f32 fidx = static_cast<f32>(m_rumbleCounter) * COUNTER_TO_FIDX;
+    f32 wave = EGG::Mathf::SinFIdx(fidx);
+    f32 height = wave * bsp().rumbleHeight;
+    f32 y = height * scale().y;
+
+    EGG::Matrix34f rumble;
+    rumble.makeT(EGG::Vector3f(0.0f, y, 0.0f));
+    m_matrix = m_physics->pose().multiplyTo(rumble);
 }
 
 /// @addr{0x8056C9C4}

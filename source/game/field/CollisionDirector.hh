@@ -60,6 +60,9 @@ public:
     void checkCourseColNarrScLocal(f32 radius, const EGG::Vector3f &pos, KCLTypeMask mask,
             u32 timeOffset);
 
+    [[nodiscard]] bool checkSpherePartial(f32 radius, const EGG::Vector3f &pos,
+            const EGG::Vector3f &prevPos, KCLTypeMask flags, CollisionInfoPartial *info,
+            KCLTypeMask *typeMaskOut, u32 timeOffset);
     [[nodiscard]] bool checkSpherePartialPush(f32 radius, const EGG::Vector3f &pos,
             const EGG::Vector3f &prevPos, KCLTypeMask flags, CollisionInfoPartial *info,
             KCLTypeMask *typeMaskOut, u32 timeOffset);

@@ -80,6 +80,8 @@ BoxColManager::~BoxColManager() {
 
 /// @addr{0x8078597C}
 void BoxColManager::clear() {
+    m_nextPlayerID = MAX_UNIT_COUNT;
+    m_nextItemID = MAX_UNIT_COUNT;
     m_nextObjectID = MAX_UNIT_COUNT;
     m_nextDrivableID = MAX_UNIT_COUNT;
     m_maxID = 0;
@@ -181,6 +183,16 @@ void BoxColManager::calc() {
     }
 }
 
+/// @addr{0x80785D8C}
+Kart::KartObject *BoxColManager::getNextPlayer() {
+    return reinterpret_cast<Kart::KartObject *>(getNextImpl(m_nextPlayerID, eBoxColFlag::Driver));
+}
+
+/// @addr{0x80785DF4}
+Item::ItemObj *BoxColManager::getNextItem() {
+    return reinterpret_cast<Item::ItemObj *>(getNextImpl(m_nextItemID, eBoxColFlag::Item));
+}
+
 /// @addr{0x80785E5C}
 ObjectCollidable *BoxColManager::getNextObject() {
     return reinterpret_cast<ObjectCollidable *>(getNextImpl(m_nextObjectID, eBoxColFlag::Object));
@@ -193,6 +205,12 @@ ObjectDrivable *BoxColManager::getNextDrivable() {
 
 /// @addr{0x80785F2C}
 void BoxColManager::resetIterators() {
+    m_nextPlayerID = -1;
+    iterate(m_nextPlayerID, eBoxColFlag::Driver);
+
+    m_nextItemID = -1;
+    iterate(m_nextItemID, eBoxColFlag::Item);
+
     m_nextObjectID = -1;
     iterate(m_nextObjectID, eBoxColFlag::Object);
 
@@ -210,6 +228,18 @@ BoxColUnit *BoxColManager::insertDriver(f32 radius, f32 maxSpeed, const EGG::Vec
     }
 
     return insert(radius, maxSpeed, pos, flag, kartObject);
+}
+
+/// @addr{0x80786064}
+BoxColUnit *BoxColManager::insertItem(f32 radius, f32 maxSpeed, const EGG::Vector3f *pos,
+        bool alwaysRecalc, Item::ItemObj *itemObj) {
+    BoxColFlag flag = BoxColFlag(eBoxColFlag::Item);
+
+    if (alwaysRecalc) {
+        flag.setBit(eBoxColFlag::PermRecalcAABB);
+    }
+
+    return insert(radius, maxSpeed, pos, flag, itemObj);
 }
 
 /// @addr{0x80786078}

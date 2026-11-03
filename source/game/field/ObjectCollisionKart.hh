@@ -21,6 +21,7 @@ public:
     void init(u32 idx);
 
     size_t checkCollision(const EGG::Matrix34f &mat, const EGG::Vector3f &v);
+    [[nodiscard]] bool checkCollision(ObjectCollisionBase &other);
 
     [[nodiscard]] static EGG::Vector3f GetHitDirection(u16 objKartHit);
     [[nodiscard]] static constexpr std::span<const EGG::Vector3f> GetVehicleVertices(

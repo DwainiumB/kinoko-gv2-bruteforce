@@ -49,6 +49,10 @@ void KartScale::calc() {
             scaleAnm = KartObjectManager::ThunderScaleUpAnmChr();
         } else if (m_type == 1) {
             scaleAnm = KartObjectManager::ThunderScaleDownAnmChr();
+        } else if (m_type == 2) {
+            scaleAnm = KartObjectManager::MegaScaleUpAnmChr();
+        } else if (m_type == 3) {
+            scaleAnm = KartObjectManager::MegaScaleDownAnmChr();
         } else {
             PANIC("Invalid scale type");
         }

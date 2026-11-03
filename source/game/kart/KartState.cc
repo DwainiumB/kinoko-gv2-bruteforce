@@ -62,6 +62,7 @@ void KartState::reset() {
     m_stickX = 0.0f;
     m_wallBonkTimer = 0;
     m_trickableTimer = 0;
+    m_kartPairMask = 0;
 }
 
 /// @stage 1+

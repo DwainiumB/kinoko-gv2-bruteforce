@@ -153,6 +153,14 @@ const KartDynamics *KartObjectProxy::dynamics() const {
     return physics()->dynamics();
 }
 
+KartKiller *KartObjectProxy::killer() {
+    return m_accessor->killer;
+}
+
+const KartKiller *KartObjectProxy::killer() const {
+    return m_accessor->killer;
+}
+
 KartState *KartObjectProxy::state() {
     return m_accessor->state;
 }

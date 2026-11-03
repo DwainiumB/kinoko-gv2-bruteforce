@@ -170,6 +170,9 @@ void KartObject::calcSub() {
 /// @addr{0x8058EEBC}
 void KartObject::calc() {
     sub()->calcPass1();
+    // 0x8059783C PlayerSub_updateTransforms: the body matrix (with the engine rumble) that the
+    // driver model hangs from. The suspension and wheel transforms are visual and left out.
+    body()->calcMatrix();
     model()->calc();
 }
 

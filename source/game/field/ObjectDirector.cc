@@ -238,6 +238,8 @@ void ObjectDirector::createObjects() {
 ObjectBase *ObjectDirector::createObject(const System::MapdataGeoObj &params) {
     ObjectId id = static_cast<ObjectId>(params.id());
     switch (id) {
+    case ObjectId::Itembox:
+        return EGG::egg_new<ObjectItembox>(params);
     case ObjectId::Psea:
         return EGG::egg_new<ObjectPsea>(params);
     case ObjectId::Woodbox:

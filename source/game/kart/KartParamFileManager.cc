@@ -9,6 +9,7 @@ void KartParamFileManager::clear() {
     m_bikeDispParam.clear();
     m_kartDispParam.clear();
     m_kartCameraParam.clear();
+    m_driverDispParam.clear();
 }
 
 /// @addr{0x805919F4}
@@ -19,9 +20,32 @@ void KartParamFileManager::init() {
     m_bikeDispParam.load("bikePartsDispParam.bin");
     m_kartDispParam.load("kartPartsDispParam.bin");
     m_kartCameraParam.load("kartCameraParam.bin");
+    m_driverDispParam.load("kartDriverDispParam.bin");
     if (!validate()) {
         PANIC("Parameter files could not be validated!");
     }
+}
+
+/// @addr{0x80592498}
+EGG::Vector3f KartParamFileManager::driverOffset(Vehicle vehicle, Character character) const {
+    constexpr size_t HEADER = 8;
+    constexpr size_t ENTRY = 14 * sizeof(f32);
+    constexpr size_t CHARACTERS = 48;
+
+    if (!m_driverDispParam.file) {
+        return EGG::Vector3f::zero;
+    }
+
+    size_t idx = static_cast<size_t>(vehicle) * CHARACTERS + static_cast<size_t>(character);
+    size_t offset = HEADER + idx * ENTRY;
+    if (offset + ENTRY > m_driverDispParam.size) {
+        return EGG::Vector3f::zero;
+    }
+
+    const u8 *entry = static_cast<const u8 *>(m_driverDispParam.file) + offset;
+    f32 y = parse<f32>(*reinterpret_cast<const f32 *>(entry));
+    f32 z = parse<f32>(*reinterpret_cast<const f32 *>(entry + sizeof(f32)));
+    return EGG::Vector3f(0.0f, y, z);
 }
 
 EGG::RamStream KartParamFileManager::getDriverStream(Character character) const {

@@ -42,6 +42,17 @@ size_t ObjectCollisionKart::checkCollision(const EGG::Matrix34f &mat, const EGG:
     return ObjectDirector::Instance()->checkKartObjectCollision(m_kartObject, m_hull);
 }
 
+/// @addr{0x8081E25C}
+/// @brief Tests the kart's convex hull, as last transformed, against another collider.
+bool ObjectCollisionKart::checkCollision(ObjectCollisionBase &other) {
+    if (!m_hull) {
+        return false;
+    }
+
+    EGG::Vector3f distance;
+    return m_hull->check(other, distance);
+}
+
 /// @addr{0x80572544}
 EGG::Vector3f ObjectCollisionKart::GetHitDirection(u16 objKartHit) {
     EGG::Vector3f hitDepth = ObjectDirector::Instance()->hitDepth(objKartHit);

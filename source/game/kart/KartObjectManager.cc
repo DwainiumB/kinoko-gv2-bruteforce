@@ -1,7 +1,9 @@
 #include "KartObjectManager.hh"
 
+#include "game/kart/KartAction.hh"
 #include "game/kart/KartCollide.hh"
 #include "game/kart/KartParamFileManager.hh"
+#include "game/kart/KartState.hh"
 #include "game/system/RaceConfig.hh"
 
 #include <abstract/g3d/ResFile.hh>
@@ -10,6 +12,9 @@ namespace Kinoko::Kart {
 
 /// @addr{0x8058FEE0}
 void KartObjectManager::init() {
+    // 0x8058FEFC
+    KartAction::ResetPowStrike();
+
     for (size_t i = 0; i < m_count; ++i) {
         m_objects[i]->initImpl();
         m_objects[i]->prepare();
@@ -20,15 +25,22 @@ void KartObjectManager::init() {
 void KartObjectManager::calc() {
     for (size_t i = 0; i < m_count; ++i) {
         KartObject *object = m_objects[i];
+        object->state()->setKartPairMask(0);
         object->collide()->setTangentOff(EGG::Vector3f::zero);
         object->collide()->setMovement(EGG::Vector3f::zero);
     }
 
+    // Every kart's first pass runs before any kart's second pass: a force one kart's collision
+    // applies to another in pass 1 reaches that kart's dynamics on the next frame.
     for (size_t i = 0; i < m_count; ++i) {
-        KartObject *object = m_objects[i];
-        object->calcSub();
-        object->calc();
+        m_objects[i]->calcSub();
     }
+
+    for (size_t i = 0; i < m_count; ++i) {
+        m_objects[i]->calc();
+    }
+
+    KartAction::CalcPowStrike();
 }
 
 /// @addr{0x8058FAA8}
@@ -80,6 +92,8 @@ KartObjectManager::~KartObjectManager() {
 
     EGG::egg_delete(s_thunderScaleUpAnmChr);
     EGG::egg_delete(s_thunderScaleDownAnmChr);
+    EGG::egg_delete(s_megaScaleUpAnmChr);
+    EGG::egg_delete(s_megaScaleDownAnmChr);
     EGG::egg_delete(s_pressScaleUpAnmChr);
 
     // If the proxy list is not cleared when we're done with the KartObjectManager, the list's
@@ -99,12 +113,18 @@ void KartObjectManager::loadScaleAnimations() {
     s_thunderScaleUpAnmChr = EGG::egg_new<Abstract::g3d::ResAnmChr>(resAnmChr);
     resAnmChr = Abstract::g3d::ResFile(file).resAnmChr("thunder_scale_down");
     s_thunderScaleDownAnmChr = EGG::egg_new<Abstract::g3d::ResAnmChr>(resAnmChr);
+    resAnmChr = Abstract::g3d::ResFile(file).resAnmChr("kinoko_scale_up");
+    s_megaScaleUpAnmChr = EGG::egg_new<Abstract::g3d::ResAnmChr>(resAnmChr);
+    resAnmChr = Abstract::g3d::ResFile(file).resAnmChr("kinoko_scale_down");
+    s_megaScaleDownAnmChr = EGG::egg_new<Abstract::g3d::ResAnmChr>(resAnmChr);
     resAnmChr = Abstract::g3d::ResFile(file).resAnmChr("press_scale_up");
     s_pressScaleUpAnmChr = EGG::egg_new<Abstract::g3d::ResAnmChr>(resAnmChr);
 }
 
 Abstract::g3d::ResAnmChr *KartObjectManager::s_thunderScaleUpAnmChr = nullptr;
 Abstract::g3d::ResAnmChr *KartObjectManager::s_thunderScaleDownAnmChr = nullptr;
+Abstract::g3d::ResAnmChr *KartObjectManager::s_megaScaleUpAnmChr = nullptr;
+Abstract::g3d::ResAnmChr *KartObjectManager::s_megaScaleDownAnmChr = nullptr;
 Abstract::g3d::ResAnmChr *KartObjectManager::s_pressScaleUpAnmChr = nullptr;
 KartObjectManager *KartObjectManager::s_instance = nullptr;
 

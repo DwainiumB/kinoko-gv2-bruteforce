@@ -3,6 +3,8 @@
 #include "game/kart/KartCollide.hh"
 #include "game/kart/KartDynamics.hh"
 #include "game/kart/KartJump.hh"
+#include "game/kart/KartKiller.hh"
+#include "game/kart/KartObjectManager.hh"
 #include "game/kart/KartParam.hh"
 #include "game/kart/KartPhysics.hh"
 #include "game/kart/KartScale.hh"
@@ -17,6 +19,7 @@
 #include "game/item/KartItem.hh"
 
 #include "game/system/CourseMap.hh"
+#include "game/system/RaceConfig.hh"
 #include "game/system/RaceManager.hh"
 #include "game/system/map/MapdataCannonPoint.hh"
 #include "game/system/map/MapdataJugemPoint.hh"
@@ -41,6 +44,15 @@ static constexpr std::array<CannonParameter, 3> CANNON_PARAMETERS = {{
 
 /// @addr{0x80577FC4}
 KartMove::KartMove() : m_smoothedUp(EGG::Vector3f::ey), m_scale(1.0f, 1.0f, 1.0f) {
+    static constexpr std::array<f32, 4> ENGINE_SPEED_FACTORS = {{0.8f, 0.9f, 1.0f, 0.7f}};
+    m_engineSpeedFactor = ENGINE_SPEED_FACTORS[static_cast<size_t>(
+            System::RaceConfig::Instance()->raceScenario().engineClass)];
+
+    m_powDodgeTimer = 0;
+    m_powHit = false;
+    m_bulletScale = 1.0f;
+    m_bulletTopRate = 0.0f;
+    m_bulletTop = EGG::Vector3f::ey;
     m_totalScale = 1.0f;
     m_hitboxScale = 1.0f;
     m_shockSpeedMultiplier = 1.0f;
@@ -136,8 +148,8 @@ void KartMove::setTurnParams() {
 /// @addr{0x805784D4}
 void KartMove::init(bool b1, bool b2) {
     m_lastSpeed = 0.0f;
-    m_baseSpeed = param()->stats().speed;
-    m_jumpPadSoftSpeedLimit = m_softSpeedLimit = param()->stats().speed;
+    m_baseSpeed = m_engineSpeedFactor * param()->stats().speed;
+    m_jumpPadSoftSpeedLimit = m_softSpeedLimit = m_baseSpeed;
     m_speed = 0.0f;
     setKartSpeedLimit();
     m_acceleration = 0.0f;
@@ -196,6 +208,14 @@ void KartMove::init(bool b1, bool b2) {
         m_mushroomBoostTimer = 0;
         m_shockTimer = 0;
         m_crushTimer = 0;
+        m_megaScale = 1.0f;
+        m_starTimer = 0;
+        m_inkTimer = 0;
+        m_inkPending = false;
+        m_powDodgeTimer = 0;
+        m_powHit = false;
+        m_megaTimer = 0;
+        m_megaShrinking = false;
     }
 
     m_jumpPadMinSpeed = 0.0f;
@@ -219,6 +239,11 @@ void KartMove::init(bool b1, bool b2) {
     m_respawnPreLandTimer = 0;
     m_respawnPostLandTimer = 0;
     m_respawnTimer = 0;
+    m_slipstreamTimer = 0;
+    m_slipstreamFactor = 1.0f;
+    m_wheelieBumpWobbleTimer = 0;
+    m_wheelieBumpWobblePhase = 0;
+    m_wheelieBumpWobbleAngle = 0.0f;
     m_bumpTimer = 0;
     m_drivingDirection = DrivingDirection::Forwards;
     m_padType.makeAllZero();
@@ -241,6 +266,7 @@ void KartMove::clear() {
     clearRampBoost();
     clearZipperBoost();
     clearSsmt();
+    clearSlipstream();
     clearOffroadInvincibility();
     m_halfPipe->end(false);
     m_jump->end();
@@ -296,6 +322,32 @@ void KartMove::calc() {
     }
 
     dynamics()->resetInternalVelocity();
+
+    if (status.onBit(eStatus::InBullet)) {
+        // The bullet bill drives: a shorter list, and no rotation of our own.
+        calcTop();
+        tryEndJumpPad();
+        calcSpecialFloor();
+        calcDirs();
+        killer()->calc();
+        calcStickyRoad();
+        calcOffroad();
+
+        if (status.offBit(eStatus::AutoDrift)) {
+            calcManualDrift();
+        }
+
+        calcScale();
+
+        if (status.onBit(eStatus::InCannon)) {
+            calcCannon();
+        }
+
+        calcInk();
+        calcAcceleration();
+        return;
+    }
+
     m_burnout.calc();
     calcSsmtStart();
     m_halfPipe->calc();
@@ -304,6 +356,7 @@ void KartMove::calc() {
     calcRespawnBoost();
     calcSpecialFloor();
     m_jump->calc();
+    calcWheelieBumpWobble();
 
     m_bumpTimer = std::max(m_bumpTimer - 1, 0);
 
@@ -322,16 +375,22 @@ void KartMove::calc() {
     calcBoost();
     calcMushroomBoost();
     calcZipperBoost();
+    calcPow();
+    calcMega();
+    calcStar();
     calcShock();
     calcCrushed();
     calcScale();
 
     if (status.onBit(eStatus::InCannon)) {
         calcCannon();
+    } else {
+        calcSlipstream();
     }
 
     calcOffroadInvincibility();
     calcVehicleSpeed();
+    calcInk();
     calcAcceleration();
     calcRotation();
 }
@@ -350,7 +409,7 @@ void KartMove::calcRespawnStart() {
 
     setInitialPhysicsValues(respawnPos, respawnRot);
 
-    Item::ItemDirector::Instance()->kartItem(0).clear();
+    Item::ItemDirector::Instance()->kartItem(param()->playerIdx()).clear();
 
     status().resetBit(eStatus::TriggerRespawn).setBit(eStatus::InRespawn);
 }
@@ -434,7 +493,12 @@ void KartMove::calcTop() {
     EGG::Vector3f inputTop = state()->top();
     auto &status = KartObjectProxy::status();
 
-    if (status.onBit(eStatus::GroundStart) && m_nonZipperAirtime >= 3) {
+    if (status.onBit(eStatus::InBullet) && killer()->calcTop()) {
+        // 0x8059D0C0: the bullet's own up axis.
+        m_smoothedUp += (m_bulletTop - m_smoothedUp) * m_bulletTopRate;
+        m_smoothedUp.normalise();
+        stabilizationFactor = m_bulletTopRate;
+    } else if (status.onBit(eStatus::GroundStart) && m_nonZipperAirtime >= 3) {
         m_smoothedUp = inputTop;
         m_up = inputTop;
         m_landingDir = m_dir.perpInPlane(m_smoothedUp, true);
@@ -1343,8 +1407,16 @@ void KartMove::calcVehicleSpeed() {
     } else if (status.offBit(eStatus::Boost)) {
         if (status.offBit(eStatus::JumpPad, eStatus::RampBoost)) {
             if (status.onBit(eStatus::Accelerate)) {
-                m_acceleration =
-                        status.onBit(eStatus::HalfPipeRamp) ? 5.0f : calcVehicleAcceleration();
+                if (!water &&
+                        (status.onBit(eStatus::InStar) ||
+                                status.onBit(eStatus::ThunderCloud, eStatus::InMega))) {
+                    m_acceleration = 3.0f;
+                } else if (status.onBit(eStatus::SlipstreamBoost) && !water) {
+                    m_acceleration = 0.7f;
+                } else {
+                    m_acceleration =
+                            status.onBit(eStatus::HalfPipeRamp) ? 5.0f : calcVehicleAcceleration();
+                }
             } else {
                 if (status.offBit(eStatus::Brake) ||
                         status.onBit(eStatus::DisableBackwardsAccel, eStatus::SoftWallPush)) {
@@ -1430,6 +1502,7 @@ void KartMove::calcAcceleration() {
     constexpr f32 ROTATION_SCALAR_BOOST_RAMP = 4.0f;
     constexpr f32 OOB_SLOWDOWN_RATE = 0.95f;
     constexpr f32 TERMINAL_VELOCITY = 90.0f;
+    constexpr f32 WHEELIE_BUMP_SPEED_FACTOR = 0.4f;
 
     m_lastSpeed = m_speed;
     auto &status = KartObjectProxy::status();
@@ -1438,70 +1511,93 @@ void KartMove::calcAcceleration() {
         dynamics()->setKillExtVelY(status.onBit(eStatus::RespawnKillY));
     }
 
-    if (status.onBit(eStatus::Burnout)) {
-        m_speed = 0.0f;
-    } else {
-        if (m_acceleration < 0.0f) {
-            if (m_speed < -20.0f) {
-                m_acceleration = 0.0f;
+    f32 speedLimit;
+    if (status.offBit(eStatus::InBullet)) {
+        if (status.onBit(eStatus::Burnout)) {
+            m_speed = 0.0f;
+        } else {
+            if (m_acceleration < 0.0f) {
+                if (m_speed < -20.0f) {
+                    m_acceleration = 0.0f;
+                } else {
+                    if (m_speed + m_acceleration <= -20.0f) {
+                        m_acceleration = -20.0f - m_speed;
+                    }
+                }
+            }
+
+            m_speed += m_acceleration;
+        }
+
+        if (status.onBit(eStatus::BeforeRespawn)) {
+            m_speed *= OOB_SLOWDOWN_RATE;
+        } else {
+            if (status.onBit(eStatus::ChargingSSMT)) {
+                m_speed *= 0.8f;
             } else {
-                if (m_speed + m_acceleration <= -20.0f) {
-                    m_acceleration = -20.0f - m_speed;
+                if (m_drivingDirection == DrivingDirection::Braking && m_speed < 0.0f) {
+                    m_speed = 0.0f;
+                    m_drivingDirection = DrivingDirection::WaitingForBackwards;
+                    m_backwardsAllowCounter = 0;
                 }
             }
         }
 
-        m_speed += m_acceleration;
-    }
-
-    if (status.onBit(eStatus::BeforeRespawn)) {
-        m_speed *= OOB_SLOWDOWN_RATE;
-    } else {
-        if (status.onBit(eStatus::ChargingSSMT)) {
-            m_speed *= 0.8f;
-        } else {
-            if (m_drivingDirection == DrivingDirection::Braking && m_speed < 0.0f) {
-                m_speed = 0.0f;
-                m_drivingDirection = DrivingDirection::WaitingForBackwards;
-                m_backwardsAllowCounter = 0;
-            }
+        speedLimit = status.onBit(eStatus::JumpPad) ? m_jumpPadMaxSpeed : m_baseSpeed;
+        const f32 boostMultiplier = m_boost.multiplier();
+        f32 boostSpdLimit = m_boost.speedLimit();
+        if (status.onBit(eStatus::InMega, eStatus::ThunderCloud)) {
+            boostSpdLimit = std::max(boostSpdLimit, 95.0f);
         }
-    }
+        if (status.onBit(eStatus::InStar)) {
+            boostSpdLimit = std::max(boostSpdLimit, 105.0f);
+        }
+        if (status.onBit(eStatus::SlipstreamBoost)) {
+            boostSpdLimit = std::max(boostSpdLimit, 115.0f);
+        }
+        m_jumpPadBoostMultiplier = boostMultiplier;
 
-    f32 speedLimit = status.onBit(eStatus::JumpPad) ? m_jumpPadMaxSpeed : m_baseSpeed;
-    const f32 boostMultiplier = m_boost.multiplier();
-    const f32 boostSpdLimit = m_boost.speedLimit();
-    m_jumpPadBoostMultiplier = boostMultiplier;
+        f32 scaleMultiplier = m_shockSpeedMultiplier;
+        if (status.onBit(eStatus::Crushed)) {
+            scaleMultiplier *= 0.7f;
+        }
 
-    f32 scaleMultiplier = m_shockSpeedMultiplier;
-    if (status.onBit(eStatus::Crushed)) {
-        scaleMultiplier *= 0.7f;
-    }
+        f32 wheelieBonus = boostMultiplier + getWheelieSoftSpeedLimitBonus();
+        speedLimit *= status.onBit(eStatus::JumpPadFixedSpeed) ?
+                1.0f :
+                scaleMultiplier * (wheelieBonus * m_kclSpeedFactor);
 
-    f32 wheelieBonus = boostMultiplier + getWheelieSoftSpeedLimitBonus();
-    speedLimit *= status.onBit(eStatus::JumpPadFixedSpeed) ?
-            1.0f :
-            scaleMultiplier * (wheelieBonus * m_kclSpeedFactor);
+        bool ignoreScale = status.onBit(eStatus::RampBoost, eStatus::ZipperInvisibleWall,
+                eStatus::OverZipper, eStatus::HalfPipeRamp);
+        f32 boostSpeed = ignoreScale ? 1.0f : scaleMultiplier;
+        boostSpeed *= boostSpdLimit * m_engineSpeedFactor * m_kclSpeedFactor;
 
-    bool ignoreScale = status.onBit(eStatus::RampBoost, eStatus::ZipperInvisibleWall,
-            eStatus::OverZipper, eStatus::HalfPipeRamp);
-    f32 boostSpeed = ignoreScale ? 1.0f : scaleMultiplier;
-    boostSpeed *= boostSpdLimit * m_kclSpeedFactor;
+        if (status.offBit(eStatus::JumpPad) && boostSpeed > 0.0f && boostSpeed > speedLimit) {
+            speedLimit = boostSpeed;
+        }
 
-    if (status.offBit(eStatus::JumpPad) && boostSpeed > 0.0f && boostSpeed > speedLimit) {
-        speedLimit = boostSpeed;
-    }
+        m_jumpPadSoftSpeedLimit = boostSpdLimit * m_engineSpeedFactor * m_kclSpeedFactor;
 
-    m_jumpPadSoftSpeedLimit = boostSpdLimit * m_kclSpeedFactor;
-
-    if (status.onBit(eStatus::RampBoost)) {
-        speedLimit = std::max(speedLimit, 100.0f);
+        if (status.onBit(eStatus::RampBoost)) {
+            speedLimit = std::max(speedLimit, 100.0f);
+        }
+    } else {
+        // The bullet bill flies at its fixed speed.
+        speedLimit = BULLET_SPEED * m_engineSpeedFactor * killer()->speedScale();
+        m_softSpeedLimit = speedLimit;
+        m_speed = speedLimit;
     }
 
     m_lastDir = (m_speed > 0.0f) ? 1.0f * m_dir : -1.0f * m_dir;
 
     f32 local_c8 = 1.0f;
     speedLimit *= calcWallCollisionSpeedFactor(local_c8);
+
+    // A bike knocked out of a wheelie by another kart is held to 40% of its limit for the 25
+    // frames of the wobble (0x8057BF08, checked against a Dolphin recording).
+    if (status.onBit(eStatus::WheelieBumpWobble)) {
+        speedLimit *= WHEELIE_BUMP_SPEED_FACTOR;
+    }
 
     if (m_softSpeedLimit <= speedLimit) {
         m_softSpeedLimit = speedLimit;
@@ -1943,6 +2039,11 @@ void KartMove::calcMtCharge() {
         m_smtCharge = MAX_SMT_CHARGE;
         m_driftState = DriftState::ChargedSmt;
     }
+
+    // 0x80578440
+    if (KartObjectProxy::status().onBit(eStatus::InBullet)) {
+        killer()->cancel();
+    }
 }
 
 /// @addr{0x80583658}
@@ -1952,7 +2053,13 @@ void KartMove::initOob() {
     clearRampBoost();
     clearZipperBoost();
     clearSsmt();
+    clearSlipstream();
     clearOffroadInvincibility();
+
+    // 0x8058379C
+    if (KartObjectProxy::status().onBit(eStatus::InBullet)) {
+        killer()->cancel();
+    }
 }
 
 /// @stage 2
@@ -2039,7 +2146,8 @@ void KartMove::tryStartJumpPad() {
     m_jumpPadProperties = &JUMP_PAD_PROPERTIES[jumpPadVariant];
 
     if (jumpPadVariant == 3 || jumpPadVariant == 4) {
-        if (m_jumpPadBoostMultiplier > 1.3f || m_jumpPadSoftSpeedLimit > 110.0f) {
+        if (m_jumpPadBoostMultiplier > 1.3f ||
+                m_jumpPadSoftSpeedLimit > 110.0f * m_engineSpeedFactor) {
             // Set speed to 100 if the player has boost from a boost panel or mushroom(item) before
             // hitting the jump pad
             static constexpr std::array<JumpPadProperties, 2> JUMP_PAD_PROPERTIES_SHROOM_BOOST = {{
@@ -2269,7 +2377,7 @@ void KartMove::calcCrushed() {
     }
 
     if (--m_crushTimer == 0) {
-        status().resetBit(eStatus::Crushed);
+        status().resetBit(eStatus::Crushed, eStatus::InCrushAction);
         m_kartScale->endCrush();
     }
 }
@@ -2280,7 +2388,7 @@ void KartMove::calcScale() {
 
     const EGG::Vector3f sizeScale = m_kartScale->sizeScale();
     setScale(m_kartScale->pressScale() * sizeScale);
-    m_totalScale = m_shockSpeedMultiplier;
+    m_totalScale = m_bulletScale * (m_shockSpeedMultiplier * m_megaScale);
     m_hitboxScale = std::max(sizeScale.z, m_totalScale);
 
     if (sizeScale.z != 1.0f) {
@@ -2290,22 +2398,321 @@ void KartMove::calcScale() {
     m_invScale = m_scale.z > 1.0f ? 1.0f / m_scale.z : 1.0f;
 }
 
-/// @addr{0x80580778}
+/// @addr{Inlined in 0x80580768}
+/// @brief A shrinking object hit us.
 void KartMove::applyShrink(u16 timer) {
-    auto &status = state()->status();
+    static_cast<void>(applyLightningEffect(static_cast<s16>(timer), true, false));
+}
 
-    if (status.onBit(eStatus::InRespawn, eStatus::AfterRespawn, eStatus::CannonStart)) {
+/// @addr{0x80580438}
+/// @brief Hit by another racer's lightning: the shrink lasts longer the better our rank.
+/// @return Whether it hit (a mega only ends the mega).
+bool KartMove::applyLightning() {
+    static constexpr std::array<s16, 12> SHRINK_DURATIONS = {{
+            690, 645, 600, 555, 510, 450, 390, 330, 270, 210, 150, 90}};
+    constexpr s16 SHRINK_DURATION_BASE = 72;
+
+    // The game uses a fixed 450 frames in battle; Kinoko has no battle mode.
+    u8 rank = System::RaceManager::Instance()->player(param()->playerIdx()).rank();
+    if (rank == 0 || rank > 12) {
+        return false;
+    }
+
+    size_t playerCount = KartObjectManager::Instance()->count();
+    s16 duration = static_cast<s16>(
+            SHRINK_DURATIONS[rank + 11 - playerCount] + SHRINK_DURATION_BASE);
+    return applyLightningEffect(duration, false, false);
+}
+
+/// @addr{0x805805EC}
+/// @brief The thunder cloud we carry strikes: the same shock as a POW block's action, for 612
+/// frames. The HUD field the game clears first is left out.
+void KartMove::applyThunderCloud() {
+    constexpr s16 SHRINK_DURATION = 612;
+
+    static_cast<void>(applyLightningEffect(SHRINK_DURATION, false, true));
+}
+
+/// @addr{0x80580778}
+/// @brief Shrinks and shocks us (lightning, a shrinking object, a POW): an action, the held item
+/// lost and a shrink for timer frames. A mega mushroom only ends the mega instead.
+/// @return Whether we were hit.
+bool KartMove::applyLightningEffect(s16 timer, bool fromObject, bool fromPow) {
+    auto &status = KartObjectProxy::status();
+    if (status.onBit(eStatus::TriggerRespawn, eStatus::NoKartCollision40, eStatus::InRespawn,
+                eStatus::AfterRespawn, eStatus::NoKartCollision82, eStatus::Vanished,
+                eStatus::NoKartCollision89, eStatus::InStar, eStatus::CannonStart,
+                eStatus::InCannon, eStatus::InBullet)) {
+        return false;
+    }
+
+    if (status.onBit(eStatus::InMega)) {
+        deactivateMega(false);
+        return true;
+    }
+
+    Action hitAction = Action::LightningHit;
+    if (fromObject) {
+        hitAction = Action::UNK_15;
+    } else if (fromPow) {
+        hitAction = Action::PowHit;
+    }
+
+    action()->start(hitAction);
+    Item::ItemDirector::Instance()->kartItem(param()->playerIdx()).loseItem();
+    status.setBit(eStatus::Shocked);
+
+    if (static_cast<s16>(m_shockTimer) < timer) {
+        m_shockTimer = static_cast<u16>(timer);
+        m_kartScale->startShrink(0);
+    }
+
+    return true;
+}
+
+/// @addr{0x80580268}
+/// @brief Star: 450 frames in which actions can't start, offroad doesn't slow us, acceleration is
+/// 3.0 and the boost speed limit at least 105. Clears ink and an ongoing crush.
+void KartMove::activateStar() {
+    constexpr s16 STAR_DURATION = 450;
+
+    auto &status = KartObjectProxy::status();
+    if (status.onBit(eStatus::NoKartCollision72, eStatus::NoKartCollision82, eStatus::Vanished,
+                eStatus::InBullet, eStatus::InAction)) {
         return;
     }
 
-    action()->start(Action::UNK_15);
-    Item::ItemDirector::Instance()->kartItem(0).clear();
-    status.setBit(eStatus::Shocked);
-
-    if (timer > m_shockTimer) {
-        m_shockTimer = timer;
-        m_kartScale->startShrink(0);
+    status.setBit(eStatus::InStar);
+    m_starTimer = STAR_DURATION;
+    if (m_offroadInvincibility < STAR_DURATION) {
+        m_offroadInvincibility = STAR_DURATION;
     }
+    status.setBit(eStatus::BoostOffroadInvincibility);
+
+    if (status.onBit(eStatus::Inked)) {
+        status.resetBit(eStatus::Inked);
+        m_inkTimer = 0;
+    }
+
+    if (status.onBit(eStatus::Crushed)) {
+        status.resetBit(eStatus::Crushed, eStatus::InCrushAction);
+        m_kartScale->endCrush();
+    }
+}
+
+/// @addr{0x805803F0}
+void KartMove::calcStar() {
+    auto &status = KartObjectProxy::status();
+    if (status.onBit(eStatus::InStar) && --m_starTimer < 1) {
+        status.resetBit(eStatus::InStar);
+    }
+}
+
+/// @addr{0x80580B14}
+/// @brief Mega mushroom: 450 frames big (the size grows through KartScale, the speed and hitbox
+/// scale through m_megaScale), squashing other racers and ignoring most hits.
+void KartMove::activateMega() {
+    constexpr s16 MEGA_DURATION = 450;
+
+    auto &status = KartObjectProxy::status();
+    status.setBit(eStatus::InMega);
+    m_megaTimer = MEGA_DURATION;
+    setObjectCollisionScale(param()->stats().megaScale);
+
+    if (status.onBit(eStatus::Shocked)) {
+        deactivateShock(false);
+    }
+
+    if (status.onBit(eStatus::Crushed)) {
+        status.resetBit(eStatus::Crushed, eStatus::InCrushAction);
+        m_kartScale->endCrush();
+    }
+
+    m_kartScale->startShrink(1);
+    m_megaShrinking = false;
+}
+
+/// @addr{0x80580DC0}
+void KartMove::calcMega() {
+    constexpr s16 MEGA_SHRINK_FRAMES = 26;
+    constexpr f32 MEGA_GROW_STEP = 0.02f;
+    constexpr f32 MEGA_SHRINK_STEP = 0.1f;
+
+    auto &status = KartObjectProxy::status();
+    if (status.offBit(eStatus::InMega)) {
+        m_megaScale = std::max(m_megaScale - MEGA_SHRINK_STEP, 1.0f);
+        return;
+    }
+
+    if (--m_megaTimer < 1) {
+        status.resetBit(eStatus::InMega);
+        m_megaTimer = 0;
+        setObjectCollisionScale(1.0f);
+        if (!m_megaShrinking) {
+            m_kartScale->endShrink(1);
+            m_megaShrinking = true;
+        }
+    } else if (!m_megaShrinking && m_megaTimer < MEGA_SHRINK_FRAMES) {
+        m_megaShrinking = true;
+        m_kartScale->endShrink(1);
+    }
+
+    m_megaScale = std::min(m_megaScale + MEGA_GROW_STEP, param()->stats().megaScale);
+}
+
+/// @addr{0x80580CDC}
+void KartMove::deactivateMega(bool resetScale) {
+    status().resetBit(eStatus::InMega);
+    m_megaTimer = 0;
+    setObjectCollisionScale(1.0f);
+    if (!m_megaShrinking) {
+        m_kartScale->endShrink(1);
+        m_megaShrinking = true;
+    }
+
+    if (resetScale) {
+        m_megaScale = 1.0f;
+    }
+}
+
+/// @addr{0x80598338}
+/// @brief Resizes the kart's box collision unit (the search sphere for objects and other karts)
+/// for a size scale. The game also scales a second kart sphere Kinoko does not have.
+void KartMove::setObjectCollisionScale(f32 scale) {
+    constexpr f32 BOX_COL_PADDING = 25.0f;
+
+    f32 radius = scale * collisionGroup()->boundingRadius();
+    boxColUnit()->resize(radius + BOX_COL_PADDING, m_hardSpeedLimit);
+}
+
+/// @addr{0x805810A8}
+/// @brief A trick input opens a 10-frame window that turns a POW spin into the light one (or
+/// lightens one already started); a POW block's last shake spins us if we are on the ground.
+/// The HUD, the battle statistics and the hit counter are left out.
+void KartMove::calcPow() {
+    constexpr s16 DODGE_FRAMES = 10;
+    constexpr u32 DODGE_LAST_FRAME = 8;
+    constexpr u32 HIT_FRAME = 8;
+
+    auto *kartAction = action();
+
+    if (--m_powDodgeTimer < 0) {
+        m_powDodgeTimer = 0;
+        if (inputs()->currentState().trick == System::Trick::Up) {
+            if (kartAction->currentAction() == Action::PowSpin) {
+                if (kartAction->frame() < DODGE_LAST_FRAME) {
+                    static_cast<void>(kartAction->dodgePow());
+                }
+            } else {
+                m_powDodgeTimer = DODGE_FRAMES;
+            }
+        }
+    }
+
+    if (kartAction->isPowStriking() && status().onBit(eStatus::TouchingGround)) {
+        static_cast<void>(kartAction->start(Action::PowSpin));
+    }
+
+    m_powHit = kartAction->currentAction() == Action::PowSpin && kartAction->frame() == HIT_FRAME;
+}
+
+/// @addr{0x805858AC}
+/// @brief The bullet bill starts: everything else ends, the kart faces its rotation, and the
+/// KartKiller takes over.
+void KartMove::activateBullet() {
+    constexpr f32 TOP_RATE = 0.3f;
+    constexpr f32 BULLET_SCALE = 1.5f;
+
+    setBulletHardSpeedLimit();
+    m_hitboxScale = param()->stats().megaScale;
+    clearForBullet();
+    m_dir = dynamics()->mainRot().rotateVector(EGG::Vector3f::ez);
+    dynamics()->setExtVel(EGG::Vector3f::zero);
+    dynamics()->setMovingRoadVel(EGG::Vector3f::zero);
+    // Dynamics +0xC8 (a vector Kinoko does not model) is cleared too.
+    physics()->clearDecayingRot();
+    m_outsideDriftBonus = 0.0f;
+    m_weightedTurn = 0.0f;
+    m_realTurn = 0.0f;
+    m_rawTurn = 0.0f;
+    m_divingRot = 0.0f;
+    m_bulletTopRate = TOP_RATE;
+    m_bulletTop = m_smoothedUp;
+    killer()->start(System::MapdataItemPoint::NONE);
+    m_bulletScale = BULLET_SCALE;
+}
+
+/// @addr{0x805837CC}
+/// @brief Ends every effect on the kart for a bullet bill: boosts, star, mega and shock. The
+/// game's list also resets a few timers and flags that Kinoko's clear functions cover; the
+/// sounds and the HUD are left out.
+void KartMove::clearForBullet() {
+    auto &status = KartObjectProxy::status();
+
+    clear();
+
+    if (status.onBit(eStatus::InStar)) {
+        status.resetBit(eStatus::InStar);
+        m_starTimer = 0;
+    }
+
+    if (status.onBit(eStatus::InMega)) {
+        deactivateMega(true);
+    }
+
+    if (status.onBit(eStatus::Shocked)) {
+        deactivateShock(false);
+    }
+}
+
+/// @addr{0x80581A58}
+/// @brief Hit by a blooper: 450 frames inked. Only the screen splat and CPU driving read it.
+void KartMove::applyInk(bool fromSelf) {
+    constexpr s16 INK_DURATION = 450;
+
+    static_cast<void>(fromSelf);
+
+    auto &status = KartObjectProxy::status();
+    if (status.onBit(eStatus::TriggerRespawn, eStatus::NoKartCollision40, eStatus::InRespawn,
+                eStatus::AfterRespawn, eStatus::NoKartCollision82, eStatus::Vanished,
+                eStatus::NoKartCollision89)) {
+        return;
+    }
+
+    status.setBit(eStatus::Inked);
+    m_inkPending = true;
+    m_inkTimer = INK_DURATION;
+}
+
+/// @addr{0x80581B1C}
+/// @brief The ink countdown. The screen splat amount the game also computes here is visual.
+void KartMove::calcInk() {
+    auto &status = KartObjectProxy::status();
+    if (status.offBit(eStatus::Inked)) {
+        return;
+    }
+
+    if (--m_inkTimer < 0) {
+        status.resetBit(eStatus::Inked);
+        m_inkTimer = 0;
+    }
+}
+
+/// @addr{0x80581C70}
+void KartMove::clearInk() {
+    status().resetBit(eStatus::Inked);
+    m_inkTimer = 0;
+}
+
+/// @addr{0x80581A28}
+/// @brief Called by the thunder cloud item object while we carry it.
+void KartMove::activateThunderCloud() {
+    status().setBit(eStatus::ThunderCloud);
+}
+
+/// @addr{0x80581A40}
+void KartMove::deactivateThunderCloud() {
+    status().resetBit(eStatus::ThunderCloud);
 }
 
 /// @addr{0x80580998}
@@ -2348,6 +2755,7 @@ void KartMove::enterCannon() {
     clearRampBoost();
     clearZipperBoost();
     clearSsmt();
+    clearSlipstream();
     clearOffroadInvincibility();
 
     dynamics()->reset();
@@ -2468,6 +2876,144 @@ void KartMove::exitCannon() {
 void KartMove::triggerRespawn() {
     m_timeInRespawn = 0;
     status().setBit(eStatus::TriggerRespawn);
+}
+
+/// @addr{0x80586FA8}
+/// @brief Slipstream. On this player's turn (one of 12 slots, see RaceManager::isSlipstreamTurn)
+/// it searches for a racer ahead: one within the 1000-unit sphere 1000 units behind that racer,
+/// inside its cone of travel, both going at least half their base speed. Off-turn frames charge
+/// for 90 frames while still found on the last turn, then boost for 135 frames.
+/// Effects, sound, rumble and mission counters are left out.
+void KartMove::calcSlipstream() {
+    constexpr f32 MIN_SPEED_RATIO = 0.5f;
+    constexpr f32 DRAFT_DISTANCE = 1000.0f;
+    constexpr f32 KART_DRAFT_CONE = 0.982f;
+    constexpr f32 BIKE_DRAFT_CONE = 0.99f;
+    constexpr u32 CHARGE_FRAMES = 90;
+    constexpr u32 BOOST_FRAMES = 135;
+    constexpr f32 CHARGE_FACTOR_STEP = 0.005f;
+    constexpr f32 MAX_CHARGE_FACTOR = 1.1f;
+    constexpr f32 BOOST_FACTOR = 1.4f;
+
+    auto &status = KartObjectProxy::status();
+    u8 selfIdx = param()->playerIdx();
+
+    if (System::RaceManager::Instance()->isSlipstreamTurn(selfIdx) &&
+            status.offBit(eStatus::Ghost, eStatus::InBullet, eStatus::SlipstreamBoost)) {
+        bool found = false;
+
+        if (status.offBit(eStatus::InAction) && m_speedRatioCapped >= MIN_SPEED_RATIO) {
+            const auto *kartMgr = KartObjectManager::Instance();
+            for (size_t i = 0; i < kartMgr->count(); ++i) {
+                const KartObject *other = kartMgr->object(i);
+                if (other->param()->playerIdx() == selfIdx || other->status().onBit(eStatus::Ghost) ||
+                        other->move()->speedRatioCapped() < MIN_SPEED_RATIO) {
+                    continue;
+                }
+
+                const EGG::Vector3f &otherPos = other->pos();
+                const EGG::Vector3f &otherDir = other->move()->dir();
+                EGG::Vector3f behind = otherPos + otherDir * -DRAFT_DISTANCE;
+
+                // 0x80571234: sphere test, its push direction and depth outputs are unused here.
+                f32 radiusSum = collide()->boundingRadius() + DRAFT_DISTANCE;
+                if (radiusSum * radiusSum - (pos() - behind).squaredLength() <= 0.0f) {
+                    continue;
+                }
+
+                EGG::Vector3f toOther = otherPos - pos();
+                f32 dist = EGG::Mathf::sqrt(toOther.squaredLength());
+                f32 cone = other->isBike() ? BIKE_DRAFT_CONE : KART_DRAFT_CONE;
+                if (otherDir.dot(toOther) > dist * cone) {
+                    found = true;
+                    break;
+                }
+            }
+        }
+
+        if (found) {
+            status.setBit(eStatus::SlipstreamCharge);
+        } else {
+            m_slipstreamTimer = 0;
+            status.resetBit(eStatus::SlipstreamCharge);
+            m_slipstreamFactor = 1.0f;
+        }
+
+        return;
+    }
+
+    if (status.onBit(eStatus::SlipstreamCharge)) {
+        m_slipstreamFactor = std::min(m_slipstreamFactor + CHARGE_FACTOR_STEP, MAX_CHARGE_FACTOR);
+
+        if (++m_slipstreamTimer >= CHARGE_FRAMES &&
+                status.offBit(eStatus::NoKartCollision72, eStatus::NoKartCollision82,
+                        eStatus::Vanished, eStatus::InBullet, eStatus::BeforeRespawn,
+                        eStatus::NoSlipstreamBoost135, eStatus::InAction)) {
+            status.resetBit(eStatus::SlipstreamCharge).setBit(eStatus::SlipstreamBoost);
+            m_slipstreamTimer = 0;
+            m_slipstreamFactor = BOOST_FACTOR;
+        }
+
+        return;
+    }
+
+    if ((status.onBit(eStatus::SlipstreamBoost) && ++m_slipstreamTimer > BOOST_FRAMES) ||
+            m_speedRatioCapped < MIN_SPEED_RATIO || status.onBit(eStatus::InAction)) {
+        m_slipstreamTimer = 0;
+        m_slipstreamFactor = 1.0f;
+        status.resetBit(eStatus::SlipstreamBoost);
+    }
+}
+
+/// @addr{0x80582488}
+void KartMove::clearSlipstream() {
+    m_slipstreamTimer = 0;
+    m_slipstreamFactor = 1.0f;
+    status().resetBit(eStatus::SlipstreamBoost, eStatus::SlipstreamCharge);
+}
+
+/// @addr{0x80579F6C}
+/// @brief Called by kart-kart collision on a bike that was in a wheelie: starts a short wobble.
+/// The game also tells this player's item holder which kart hit it; items are not in Kinoko yet.
+void KartMove::startWheelieBumpWobble() {
+    status().setBit(eStatus::WheelieBumpWobble);
+    m_wheelieBumpWobbleTimer = 0;
+    m_wheelieBumpWobbleAngle = 0.0f;
+    Item::ItemDirector::Instance()->kartItem(param()->playerIdx()).dropTrail(true);
+}
+
+/// @addr{0x80579FE4}
+/// @brief For 25 frames after a wheelie bump, while on the ground and not in an action, rocks the
+/// bike's yaw rate with a sine scaled by speed.
+void KartMove::calcWheelieBumpWobble() {
+    constexpr s16 WOBBLE_DURATION = 25;
+    constexpr f32 FULL_WOBBLE_SPEED_RATIO = 0.4f;
+    constexpr u16 PHASE_STEP = 5000;
+    constexpr f32 PHASE_TO_FIDX = 1.0f / 256.0f;
+    constexpr f32 WOBBLE_AMPLITUDE = 0.1f;
+
+    auto &status = KartObjectProxy::status();
+    if (status.offBit(eStatus::WheelieBumpWobble)) {
+        return;
+    }
+
+    if (++m_wheelieBumpWobbleTimer > WOBBLE_DURATION) {
+        status.resetBit(eStatus::WheelieBumpWobble);
+        return;
+    }
+
+    if (status.offBit(eStatus::TouchingGround) || status.onBit(eStatus::InAction)) {
+        return;
+    }
+
+    f32 speedFactor = std::min(m_speedRatioCapped / FULL_WOBBLE_SPEED_RATIO, 1.0f);
+    m_wheelieBumpWobblePhase = static_cast<u16>(m_wheelieBumpWobblePhase + PHASE_STEP);
+    f32 sin = EGG::Mathf::SinFIdx(PHASE_TO_FIDX * static_cast<f32>(m_wheelieBumpWobblePhase));
+    m_wheelieBumpWobbleAngle = speedFactor * (WOBBLE_AMPLITUDE * sin);
+
+    EGG::Vector3f angVel2 = dynamics()->angVel2();
+    angVel2 += EGG::Vector3f(0.0f, m_wheelieBumpWobbleAngle, 0.0f);
+    dynamics()->setAngVel2(angVel2);
 }
 
 /// @addr{0x80587B30}
@@ -2695,6 +3241,10 @@ void KartMoveBike::calcWheelie() {
             angVel0.x *= 0.9f;
             dynamics()->setAngVel0(angVel0);
         }
+    } else if (status.onBit(eStatus::WheelieBumpWobble)) {
+        // Knocked out of a wheelie by another kart: the front comes down at a fixed rate
+        // (0x805885A8, checked against a Dolphin recording).
+        m_wheelieRot -= 0.002f;
     } else if (0.0f < m_wheelieRot) {
         m_wheelieRotDec -= 0.001f;
         m_wheelieRotDec = std::max(-0.03f, m_wheelieRotDec);
@@ -2736,6 +3286,12 @@ void KartMoveBike::onHop() {
 /// @stage 2
 /// @brief Called when you collide with a wall. All it does for bikes is cancel wheelies.
 void KartMoveBike::onWallCollision() {
+    cancelWheelie();
+}
+
+/// @addr{0x80588FC0}
+/// @brief Called after a kart-kart bump: bikes lose their wheelie.
+void KartMoveBike::onPlayerBump() {
     cancelWheelie();
 }
 

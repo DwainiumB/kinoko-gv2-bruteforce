@@ -38,6 +38,7 @@ class RailManager;
 
 namespace Item {
 class ItemDirector;
+class ItemSlotData;
 } // namespace Item
 
 namespace Kart {
@@ -111,6 +112,8 @@ private:
         Field::ObjectDrivableDirector *m_objDrivableDir;
         Field::RailManager *m_railMgr;
         Item::ItemDirector *m_itemDir;
+        Item::ItemSlotData *m_itemSlotData;
+        std::array<u8, 6> m_itemRaceFlags;
         Kart::KartObjectManager *m_kartObjMgr;
         Kart::KartParamFileManager *m_paramFileMgr;
         System::CourseMap *m_courseMap;

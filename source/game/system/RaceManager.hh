@@ -7,6 +7,8 @@
 
 #include <egg/math/Vector.hh>
 
+#include <bit>
+
 namespace Kinoko {
 
 namespace Host {
@@ -87,6 +89,12 @@ public:
         [[nodiscard]] bool finished() const {
             return m_finished;
         }
+
+        /// @brief 1-based place in the race (RaceManager::Player +0x20 in the game), updated every
+        /// frame by RaceManager::calcRanks; the starting grid place before that.
+        [[nodiscard]] u8 rank() const {
+            return m_rank;
+        }
         /// @endGetters
 
     private:
@@ -99,6 +107,7 @@ public:
         void endRace(const Timer &finishTime);
 
         u16 m_checkpointId;
+        u8 m_rank;
         f32 m_raceCompletion;
         f32 m_checkpointFactor; ///< The proportion of a lap for the current checkpoint
         f32 m_checkpointStartLapCompletion;
@@ -147,8 +156,16 @@ public:
         return STAGE_COUNTDOWN_DURATION - m_timer;
     }
 
+    /// @brief The first generator (+0x04, seed 1): course objects, the per-frame advance, and the
+    /// items of an offline race.
     [[nodiscard]] Random &random() {
         return m_random;
+    }
+
+    /// @brief The second generator (+0x08, seed 2): item box timers, and the items of an online
+    /// race or a Time Trial.
+    [[nodiscard]] Random &random2() {
+        return m_random2;
     }
 
     /// @brief The race state of player idx (0 is the local player).
@@ -171,6 +188,12 @@ public:
     [[nodiscard]] u32 timer() const {
         return m_timer;
     }
+
+    /// @brief Whether this player runs its slipstream search this frame. One of 12 slots, one slot
+    /// per frame from the countdown on, whatever the player count (offset 0x38 in the game).
+    [[nodiscard]] bool isSlipstreamTurn(u8 idx) const {
+        return idx == std::countl_zero(m_slipstreamTurn);
+    }
     /// @endGetters
 
     static RaceManager *CreateInstance();
@@ -183,19 +206,24 @@ public:
 private:
     EGG_NEW_DELETE_FRIEND
 
+    void calcSlipstreamTurn();
+    void calcRanks();
+
     RaceManager();
     ~RaceManager() override;
 
-    Random m_random;
+    Random m_random;  ///< +0x04
+    Random m_random2; ///< +0x08
     std::array<Player, MAX_PLAYERS> m_players;
     size_t m_playerCount;
     TimerManager m_timerManager;
     Stage m_stage;
     u16 m_introTimer;
     u32 m_timer;
+    u32 m_slipstreamSlots; ///< One bit per slipstream slot, from the top (offset 0x34).
+    u32 m_slipstreamTurn;  ///< The slot whose turn it is (offset 0x38).
 
     static constexpr u16 STAGE_COUNTDOWN_DURATION = 240;
-    static constexpr u32 RNG_SEED = 0x74A1B095;
 
     static RaceManager *s_instance; ///< @addr{0x809BD730}
 };

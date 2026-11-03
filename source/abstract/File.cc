@@ -9,7 +9,7 @@
 
 namespace Kinoko::Abstract::File {
 
-u8 *Load(const char *path, size_t &size) {
+static u8 *LoadImpl(const char *path, size_t &size, bool optional) {
     char filepath[256];
 
     if (path[0] == '/') {
@@ -41,6 +41,10 @@ u8 *Load(const char *path, size_t &size) {
 
     std::ifstream file(filepath, std::ios::binary);
     if (!file) {
+        if (optional) {
+            size = 0;
+            return nullptr;
+        }
         PANIC("Failed to load file %s! (KINOKO_FILESYSTEM_ROOT=%s)", path, root ? root : "(unset)");
     }
 
@@ -52,6 +56,14 @@ u8 *Load(const char *path, size_t &size) {
     file.read(reinterpret_cast<char *>(buffer), size);
 
     return buffer;
+}
+
+u8 *Load(const char *path, size_t &size) {
+    return LoadImpl(path, size, false);
+}
+
+u8 *TryLoad(const char *path, size_t &size) {
+    return LoadImpl(path, size, true);
 }
 
 u8 *LoadHost(const char *path, size_t &size) {

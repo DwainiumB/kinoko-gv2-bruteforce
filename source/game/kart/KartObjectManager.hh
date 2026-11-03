@@ -26,6 +26,10 @@ public:
 
     /// @beginGetters
     /// @addr{0x80590100}
+    [[nodiscard]] size_t count() const {
+        return m_count;
+    }
+
     [[nodiscard]] KartObject *object(size_t i) const {
         ASSERT(i < m_count);
         return m_objects[i];
@@ -41,6 +45,14 @@ public:
 
     [[nodiscard]] static const Abstract::g3d::ResAnmChr *ThunderScaleDownAnmChr() {
         return s_thunderScaleDownAnmChr;
+    }
+
+    [[nodiscard]] static const Abstract::g3d::ResAnmChr *MegaScaleUpAnmChr() {
+        return s_megaScaleUpAnmChr;
+    }
+
+    [[nodiscard]] static const Abstract::g3d::ResAnmChr *MegaScaleDownAnmChr() {
+        return s_megaScaleDownAnmChr;
     }
 
     [[nodiscard]] static const Abstract::g3d::ResAnmChr *PressScaleUpAnmChr() {
@@ -64,6 +76,8 @@ private:
 
     static Abstract::g3d::ResAnmChr *s_thunderScaleUpAnmChr;   ///< @addr{0x809C18A0}
     static Abstract::g3d::ResAnmChr *s_thunderScaleDownAnmChr; ///< @addr{0x809C18A4}
+    static Abstract::g3d::ResAnmChr *s_megaScaleUpAnmChr;      ///< "kinoko_scale_up"
+    static Abstract::g3d::ResAnmChr *s_megaScaleDownAnmChr;    ///< "kinoko_scale_down"
     static Abstract::g3d::ResAnmChr *s_pressScaleUpAnmChr;     ///< @addr{0x809C18B0}
     static KartObjectManager *s_instance;                      ///< @addr{0x809C18F8}
 };

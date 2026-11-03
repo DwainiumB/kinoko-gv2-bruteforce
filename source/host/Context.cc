@@ -11,6 +11,8 @@
 #include <game/field/obj/ObjectFlamePoleFoot.hh>
 
 #include <game/item/ItemDirector.hh>
+#include <game/item/ItemRaceFlags.hh>
+#include <game/item/ItemSlotData.hh>
 
 #include <game/kart/KartObjectManager.hh>
 #include <game/kart/KartParamFileManager.hh>
@@ -46,6 +48,11 @@ Context::Context(size_t bytes) : m_size(bytes) {
     m_statics.m_objDrivableDir = Field::ObjectDrivableDirector::s_instance;
     m_statics.m_railMgr = Field::RailManager::s_instance;
     m_statics.m_itemDir = Item::ItemDirector::s_instance;
+    m_statics.m_itemSlotData = Item::ItemSlotData::s_instance;
+    m_statics.m_itemRaceFlags = {Item::ItemRaceFlags::s_playerCount,
+            Item::ItemRaceFlags::s_online, Item::ItemRaceFlags::s_versus,
+            Item::ItemRaceFlags::s_battle, Item::ItemRaceFlags::s_timeTrial,
+            Item::ItemRaceFlags::s_teams};
     m_statics.m_kartObjMgr = Kart::KartObjectManager::s_instance;
     m_statics.m_paramFileMgr = Kart::KartParamFileManager::s_instance;
     m_statics.m_courseMap = System::CourseMap::s_instance;
@@ -135,6 +142,8 @@ bool Context::operator==(const Context &rhs) const {
     ret = ret && m_statics.m_objDrivableDir == rhs.m_statics.m_objDrivableDir;
     ret = ret && m_statics.m_railMgr == rhs.m_statics.m_railMgr;
     ret = ret && m_statics.m_itemDir == rhs.m_statics.m_itemDir;
+    ret = ret && m_statics.m_itemSlotData == rhs.m_statics.m_itemSlotData;
+    ret = ret && m_statics.m_itemRaceFlags == rhs.m_statics.m_itemRaceFlags;
     ret = ret && m_statics.m_kartObjMgr == rhs.m_statics.m_kartObjMgr;
     ret = ret && m_statics.m_paramFileMgr == rhs.m_statics.m_paramFileMgr;
     ret = ret && m_statics.m_courseMap == rhs.m_statics.m_courseMap;
@@ -208,6 +217,13 @@ void Context::SetActiveContext(const Context &rhs) {
     Field::ObjectDrivableDirector::s_instance = rhs.m_statics.m_objDrivableDir;
     Field::RailManager::s_instance = rhs.m_statics.m_railMgr;
     Item::ItemDirector::s_instance = rhs.m_statics.m_itemDir;
+    Item::ItemSlotData::s_instance = rhs.m_statics.m_itemSlotData;
+    Item::ItemRaceFlags::s_playerCount = rhs.m_statics.m_itemRaceFlags[0];
+    Item::ItemRaceFlags::s_online = rhs.m_statics.m_itemRaceFlags[1] != 0;
+    Item::ItemRaceFlags::s_versus = rhs.m_statics.m_itemRaceFlags[2] != 0;
+    Item::ItemRaceFlags::s_battle = rhs.m_statics.m_itemRaceFlags[3] != 0;
+    Item::ItemRaceFlags::s_timeTrial = rhs.m_statics.m_itemRaceFlags[4] != 0;
+    Item::ItemRaceFlags::s_teams = rhs.m_statics.m_itemRaceFlags[5] != 0;
     Kart::KartObjectManager::s_instance = rhs.m_statics.m_kartObjMgr;
     Kart::KartParamFileManager::s_instance = rhs.m_statics.m_paramFileMgr;
     System::CourseMap::s_instance = rhs.m_statics.m_courseMap;

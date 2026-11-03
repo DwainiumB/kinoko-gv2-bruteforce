@@ -39,6 +39,13 @@ public:
     [[nodiscard]] f32 speedLimit() const {
         return m_speedLimit;
     }
+
+    /// @brief Whether a boost of this type is running. The game keeps these as a mask at
+    /// KartMove +0x118, type t at bit 2t: 0x1 mini-turbo, 0x4 mushroom / boost panel, 0x10 trick /
+    /// zipper.
+    [[nodiscard]] bool active(Type type) const {
+        return m_active[static_cast<size_t>(type)];
+    }
     /// @endGetters
 
 private:

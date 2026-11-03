@@ -11,6 +11,33 @@ void CollisionDirector::checkCourseColNarrScLocal(f32 radius, const EGG::Vector3
     ObjectDrivableDirector::Instance()->colNarScLocal(radius, pos, mask, timeOffset);
 }
 
+/// @addr{0x8078F140}
+bool CollisionDirector::checkSpherePartial(f32 radius, const EGG::Vector3f &pos,
+        const EGG::Vector3f &prevPos, KCLTypeMask flags, CollisionInfoPartial *info,
+        KCLTypeMask *typeMaskOut, u32 timeOffset) {
+    if (info) {
+        info->bbox.setZero();
+    }
+
+    if (typeMaskOut) {
+        resetCollisionEntries(typeMaskOut);
+    }
+
+    auto *courseColMgr = CourseColMgr::Instance();
+    bool colliding = flags &&
+            courseColMgr->checkSpherePartial(1.0f, radius, nullptr, pos, prevPos, flags, info,
+                    typeMaskOut);
+
+    colliding |= ObjectDrivableDirector::Instance()->checkSpherePartial(radius, pos, prevPos,
+            flags, info, typeMaskOut, timeOffset);
+
+    if (colliding && info) {
+        info->tangentOff = info->bbox.min + info->bbox.max;
+    }
+
+    return colliding;
+}
+
 /// @addr{0x8078F320}
 bool CollisionDirector::checkSpherePartialPush(f32 radius, const EGG::Vector3f &pos,
         const EGG::Vector3f &prevPos, KCLTypeMask flags, CollisionInfoPartial *info,

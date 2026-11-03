@@ -44,6 +44,8 @@ enum class Reaction {
     ExplosionLoseItem = 32,
 };
 
+class KartObject;
+
 /// @brief Manages body+wheel collision and its influence on position/velocity/etc.
 /// @nosubgrouping
 class KartCollide : KartObjectProxy {
@@ -88,14 +90,9 @@ public:
             Field::CollisionInfo *colInfo);
     void calcBoundingRadius();
     void calcObjectCollision();
-    /// @brief Kart-to-kart collision. NOT ported from the original game (that function hasn't been
-    /// decompiled); this is an approximation: overlapping bounding spheres push each kart away from
-    /// the other along the line between them (using the same KartMove::applyForce(30.0f, dir,
-    /// false) the game's own "SmallBump" object reaction uses, so at least the push itself matches
-    /// a real, verified formula) plus a small direct position correction so two karts driving side
-    /// by side at matched speed don't just sit overlapping (the real SmallBump reaction has no such
-    /// correction; it isn't needed for a single bump against a static object).
-    void calcKartCollision();
+    void calcItemCollision();
+    void calcPlayerCollision(KartObject *other);
+    void calcPlayerBumpTimer();
     void calcPoleTimer();
 
     void processWheel(CollisionData &collisionData, Hitbox &hitbox, Field::CollisionInfo *colInfo,
@@ -211,10 +208,20 @@ public:
     [[nodiscard]] f32 colPerpendicularity() const {
         return m_colPerpendicularity;
     }
+
+    [[nodiscard]] s16 playerBumpTimer() const {
+        return m_playerBumpTimer;
+    }
     /// @endGetters
 
 private:
     typedef Action (KartCollide::*ObjectCollisionHandler)(size_t idx);
+
+    [[nodiscard]] static bool IsPlayerCollisionDisabled(const KartObjectProxy *kart);
+    [[nodiscard]] bool checkPlayerHitboxOverlap(EGG::BoundBox3f &pushBox,
+            EGG::BoundBox3f &contactBox, KartObject *other);
+    void applyPlayerBump(f32 sign, const KartObjectProxy *source, KartObjectProxy *target,
+            const EGG::Vector3f &hitDir, const EGG::Vector3f &pushDir);
 
     KartPullPath m_pullPath;
     f32 m_boundingRadius;
@@ -226,6 +233,7 @@ private:
     s16 m_respawnTimer;
     s16 m_solidOobTimer;
     s16 m_shrinkTimer;
+    s16 m_playerBumpTimer; ///< Offset 0x18. Set to 10 on a kart-kart bump, no bump while > 0.
     f32 m_smoothedBack; // 0x50
     f32 m_sumHitboxBottomHeightSoftWall;
     u16 m_numSoftWallCollisions;

@@ -37,6 +37,7 @@ class KartCollide;
 class KartDynamics;
 class KartHalfPipe;
 class KartJump;
+class KartKiller;
 class KartMove;
 class KartParam;
 struct BSP;
@@ -60,6 +61,7 @@ struct KartAccessor {
     KartCollide *collide;
     Field::ObjectCollisionKart *objectCollisionKart;
     KartState *state;
+    KartKiller *killer;
 
     fixed_vector<KartSuspension *> suspensions;
     fixed_vector<KartTire *> tires;
@@ -87,6 +89,8 @@ public:
     [[nodiscard]] const KartAction *action() const;
     [[nodiscard]] KartBody *body();
     [[nodiscard]] const KartBody *body() const;
+    [[nodiscard]] KartKiller *killer();
+    [[nodiscard]] const KartKiller *killer() const;
     [[nodiscard]] KartCollide *collide();
     [[nodiscard]] const KartCollide *collide() const;
     [[nodiscard]] CollisionGroup *collisionGroup();

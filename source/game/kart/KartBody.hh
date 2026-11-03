@@ -14,6 +14,7 @@ public:
     [[nodiscard]] virtual EGG::Matrix34f wheelMatrix(u16);
 
     void reset();
+    void calcMatrix();
     void calcSinkDepth();
     void trySetTargetSinkDepth(f32 val);
     void calcTargetSinkDepth();
@@ -33,6 +34,12 @@ public:
     [[nodiscard]] f32 sinkDepth() const {
         return m_sinkDepth;
     }
+
+    /// @brief The body's world matrix (+0x1C): the pose with the engine rumble, which the driver
+    /// model and the items it holds are placed with.
+    [[nodiscard]] const EGG::Matrix34f &matrix() const {
+        return m_matrix;
+    }
     /// @endGetters
 
 protected:
@@ -40,6 +47,9 @@ protected:
     f32 m_anAngle;   ///< @rename
     f32 m_sinkDepth; ///< Vehicle offset applied downward into collision
     f32 m_targetSinkDepth;
+    EGG::Matrix34f m_matrix; ///< +0x1C, see @ref matrix.
+    u16 m_rumbleCounter;     ///< +0xA4: advances by the BSP's rumble speed every frame, wraps.
+    bool m_rumbleStarted;
 };
 
 class KartBodyKart : public KartBody {

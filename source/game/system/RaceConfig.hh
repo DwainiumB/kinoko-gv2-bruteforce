@@ -38,20 +38,60 @@ public:
         Vehicle vehicle;
         Type type;
         bool driftIsAuto;
+        /// 1-based place on the starting grid in a VS race (the game's menus set it; offset 0x109
+        /// in the game's player struct). 0 means player index + 1.
+        u8 startPlacement;
     };
 
     struct Scenario {
     public:
+        /// @brief Offset 0xB50 in the game's scenario (0xB70 in RaceConfig).
         enum class GameMode {
+            Grand_Prix = 0,
+            Versus = 1,
             Time_Trial = 2,
+            Battle = 3,
+            Mission = 4,
             Ghost_Race = 5,
+            Online_Private_Versus = 7,
+            Online_Public_Versus = 8,
+            Online_Public_Battle = 9,
+            Online_Private_Battle = 10,
+            Awards = 11,
+            Credits = 12,
+        };
+
+        /// @brief Which items the boxes give (offset 0xB60 in the game's scenario).
+        enum class ItemMode {
+            Balanced = 0,
+            Frantic = 1,
+            Strategic = 2,
+            None = 3,
         };
 
         void init();
+        void initRng();
+
+        /// @brief The race's engine class (offset 0xB6C in the game's RaceConfig). It scales
+        /// speeds through KartMove's engine speed factor.
+        enum class EngineClass {
+            CC50 = 0,
+            CC100 = 1,
+            CC150 = 2,
+            Battle = 3,
+        };
 
         std::array<Player, 12> players;
         u8 playerCount;
         Course course;
+        EngineClass engineClass;
+        GameMode gameMode;
+        ItemMode itemMode;
+        /// @brief Seeds of RaceManager's two random generators (offsets 0xB74 and 0xB78 in the
+        /// game's scenario). The game takes them from the clock outside Time Trials; Kinoko's
+        /// host sets them so that every client of a race draws the same numbers.
+        u32 seed1;
+        u32 seed2;
     };
 
     typedef std::function<void(RaceConfig *, void *)> InitCallback;

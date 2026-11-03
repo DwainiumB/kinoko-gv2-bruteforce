@@ -21,6 +21,7 @@ void RaceConfig::initRace() {
         s_onInitCallback(this, s_onInitCallbackArg);
     }
 
+    m_raceScenario.initRng();
     initControllers();
 }
 
@@ -91,12 +92,34 @@ RaceConfig::~RaceConfig() {
 void RaceConfig::Scenario::init() {
     playerCount = 0;
     course = Course::GCN_Mario_Circuit;
+    engineClass = EngineClass::CC150;
+    gameMode = GameMode::Time_Trial;
+    itemMode = ItemMode::Balanced;
+    seed1 = 0;
+    seed2 = 0;
 
     for (size_t i = 0; i < players.size(); ++i) {
         Player &player = players[i];
         player.character = Character::Mario;
         player.vehicle = Vehicle::Standard_Kart_M;
         player.type = Player::Type::None;
+        player.startPlacement = 0;
+    }
+}
+
+/// @addr{0x8052F924}
+/// @brief Seeds RaceManager's random generators. Time Trials, missions and ghost races use a
+/// fixed first seed so that ghosts replay; the second one, and both seeds of every other offline
+/// mode, come from the clock (`OSGetTick`) in the game. Kinoko has no clock: the host's seeds
+/// stand in for it, as the network's do for an online race. The tournament branch (mode flag 4,
+/// seed1 0x92BC7D03) is not ported: Kinoko has no mode flags.
+void RaceConfig::Scenario::initRng() {
+    constexpr u32 TIME_TRIAL_SEED = 0x74A1B095;
+
+    bool fixedSeed = gameMode == GameMode::Time_Trial || gameMode == GameMode::Mission ||
+            gameMode == GameMode::Ghost_Race;
+    if (fixedSeed) {
+        seed1 = TIME_TRIAL_SEED;
     }
 }
 

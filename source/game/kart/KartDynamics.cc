@@ -52,6 +52,7 @@ void KartDynamics::init() {
     m_forceUpright = true;
     m_noGravity = false;
     m_killExtVelY = false;
+    m_bikeAsKart = false;
     m_stabilizationFactor = 0.1f;
     m_top_ = EGG::Vector3f::ey;
     m_speedFix = 0.0f;
@@ -241,6 +242,11 @@ void KartDynamicsBike::forceUpright() {
 /// @brief Stabilizes the bike by rotating towards the y-axis unit vector.
 /// @addr{0x805B6448}
 void KartDynamicsBike::stabilize() {
+    if (m_bikeAsKart) {
+        KartDynamics::stabilize();
+        return;
+    }
+
     EGG::Vector3f forward = m_top.cross(m_mainRot.rotateVector(EGG::Vector3f::ez)).cross(m_top);
     forward.normalise();
     EGG::Vector3f local_4c = forward.cross(m_top_.cross(forward));

@@ -15,12 +15,16 @@ void CourseMap::init() {
     constexpr u32 CHECK_PATH_SIGNATURE = 0x434b5048;
     constexpr u32 CHECK_POINT_SIGNATURE = 0x434b5054;
     constexpr u32 GEO_OBJ_SIGNATURE = 0x474f424a;
+    constexpr u32 ITEM_PATH_SIGNATURE = 0x49545048;
+    constexpr u32 ITEM_POINT_SIGNATURE = 0x49545054;
     constexpr u32 JUGEM_POINT_SIGNATURE = 0x4a475054;
     constexpr u32 START_POINT_SIGNATURE = 0x4b545054;
     constexpr u32 POINT_INFO_SIGNATURE = 0x504f5449;
     constexpr u32 STAGE_INFO_SIGNATURE = 0x53544749;
 
     m_startPoint = parseMapdata<MapdataStartPointAccessor>(START_POINT_SIGNATURE);
+    m_itemPath = parseMapdata<MapdataItemPathAccessor>(ITEM_PATH_SIGNATURE);
+    m_itemPoint = parseMapdata<MapdataItemPointAccessor>(ITEM_POINT_SIGNATURE);
     m_checkPath = parseMapdata<MapdataCheckPathAccessor>(CHECK_PATH_SIGNATURE);
     m_checkPoint = parseMapdata<MapdataCheckPointAccessor>(CHECK_POINT_SIGNATURE);
     m_geoObj = parseMapdata<MapdataGeoObjAccessor>(GEO_OBJ_SIGNATURE);
@@ -32,6 +36,10 @@ void CourseMap::init() {
 
     ASSERT(m_area);
     m_area->sort();
+
+    for (u16 i = 0; i < getItemPointCount(); ++i) {
+        getItemPoint(i)->initLinks(static_cast<u8>(i));
+    }
 
     MapdataStageInfo *stageInfo = getStageInfo();
     constexpr u8 TRANSLATION_MODE_NARROW = 1;
@@ -47,6 +55,16 @@ void CourseMap::init() {
 
     m_startTmp0 = 800.0f;
     m_startTmp1 = 1200.0f;
+}
+
+/// @brief The number of enemy (CPU route) paths in the course's ENPH section.
+/// @details The game keeps an accessor for this section at +0x0C. Kinoko does not parse the CPU
+/// routes; only the CPU AI's start-up draw (Enemy::AI::Init) needs to know whether there are any.
+u16 CourseMap::getEnemyPathCount() const {
+    constexpr u32 ENEMY_PATH_SIGNATURE = 0x454e5048;
+
+    const MapSectionHeader *header = m_course->findSection(ENEMY_PATH_SIGNATURE);
+    return header ? parse<u16>(header->count) : 0;
 }
 
 /// @addr{0x80511500}
@@ -223,7 +241,8 @@ void CourseMap::DestroyInstance() {
 
 /// @addr{0x8051276C}
 CourseMap::CourseMap()
-    : m_course(nullptr), m_startPoint(nullptr), m_stageInfo(nullptr), m_startTmpAngle(0.0f),
+    : m_course(nullptr), m_startPoint(nullptr), m_itemPath(nullptr), m_itemPoint(nullptr),
+      m_stageInfo(nullptr), m_startTmpAngle(0.0f),
       m_startTmp0(0.0f), m_startTmp1(0.0f), m_startTmp2(0.0f), m_startTmp3(0.0f) {}
 
 /// @addr{0x805127AC}
@@ -241,6 +260,8 @@ CourseMap::~CourseMap() {
     EGG::egg_delete(m_geoObj);
     EGG::egg_delete(m_area);
     EGG::egg_delete(m_jugemPoint);
+    EGG::egg_delete(m_itemPath);
+    EGG::egg_delete(m_itemPoint);
     EGG::egg_delete(m_cannonPoint);
     EGG::egg_delete(m_stageInfo);
 }

@@ -13,6 +13,7 @@ namespace Kinoko::System {
 
 /// @addr{0x80532F88}
 void RaceManager::init() {
+    m_slipstreamTurn = 0x80000000;
     m_playerCount = RaceConfig::Instance()->raceScenario().playerCount;
     for (size_t i = 0; i < m_playerCount; ++i) {
         m_players[i].init(static_cast<u8>(i));
@@ -21,8 +22,12 @@ void RaceManager::init() {
 
 /// @addr{0x805362DC}
 void RaceManager::findKartStartPoint(u8 idx, EGG::Vector3f &pos, EGG::Vector3f &angles) {
-    u32 placement = idx + 1;
-    u32 playerCount = RaceConfig::Instance()->raceScenario().playerCount;
+    // VS: the place the menus gave this player (RaceManager::Player +0x20 in the game, copied from
+    // the race config). Kinoko has no game modes; one racer gets place 1 of 1 as in Time Trials.
+    const auto &scenario = RaceConfig::Instance()->raceScenario();
+    u8 startPlacement = scenario.players[idx].startPlacement;
+    u32 placement = startPlacement > 0 ? startPlacement : idx + 1;
+    u32 playerCount = scenario.playerCount;
     u32 startPointIdx = 0;
 
     MapdataStartPoint *kartpoint = CourseMap::Instance()->getStartPoint(startPointIdx);
@@ -61,6 +66,8 @@ void RaceManager::calc() {
         m_players[i].calc();
     }
 
+    calcRanks();
+
     switch (m_stage) {
     case Stage::Intro:
         if (++m_introTimer >= STAGE_INTRO_DURATION) {
@@ -69,17 +76,74 @@ void RaceManager::calc() {
         }
         break;
     case Stage::Countdown:
+        calcSlipstreamTurn();
         if (++m_timer >= STAGE_COUNTDOWN_DURATION) {
             m_timerManager.setStarted(true);
             m_stage = Stage::Race;
         }
         break;
     case Stage::Race:
+        calcSlipstreamTurn();
         ++m_timer;
         break;
     default:
+        calcSlipstreamTurn();
         break;
     }
+}
+
+/// @addr{0x805336D8}
+/// @brief Ranks the racers by race completion, finished racers first by finish time. An insertion
+/// sort that starts from last frame's order, so ties keep it.
+void RaceManager::calcRanks() {
+    constexpr f64 FINISHED_INDEX_FACTOR = static_cast<f64>(0.01f);
+    constexpr f64 FINISHED_BASE = 6000099.0;
+
+    std::array<f64, MAX_PLAYERS> scores;
+    std::array<u8, MAX_PLAYERS> order;
+
+    for (size_t i = 0; i < m_playerCount; ++i) {
+        const Player &player = m_players[i];
+        size_t slot = player.m_rank - 1;
+
+        if (player.m_finished) {
+            const Timer &time = player.m_raceTimer;
+            u32 min = time.min < 100 ? time.min : 99;
+            u32 sec = time.min < 100 ? time.sec : 59;
+            u32 mil = time.min < 100 ? time.mil : 999;
+            u32 timeMs = mil + (sec + min * 60) * 1000;
+            scores[slot] = FINISHED_INDEX_FACTOR * static_cast<f64>(static_cast<u32>(i)) +
+                    (FINISHED_BASE - static_cast<f64>(timeMs));
+        } else {
+            scores[slot] = static_cast<f64>(player.m_raceCompletion);
+        }
+
+        order[slot] = static_cast<u8>(i);
+    }
+
+    for (size_t i = 1; i < m_playerCount; ++i) {
+        f64 score = scores[i];
+        u8 idx = order[i];
+        size_t j = i;
+        for (; j > 0 && scores[j - 1] < score; --j) {
+            scores[j] = scores[j - 1];
+            order[j] = order[j - 1];
+        }
+
+        scores[j] = score;
+        order[j] = idx;
+    }
+
+    for (size_t i = 0; i < m_playerCount; ++i) {
+        m_players[order[i]].m_rank = static_cast<u8>(i + 1);
+    }
+}
+
+/// @addr{0x8055070C}
+/// @brief Passes the slipstream search to the next of the 12 slots, wrapping to slot 0.
+void RaceManager::calcSlipstreamTurn() {
+    u32 next = (m_slipstreamTurn >> 1) & m_slipstreamSlots;
+    m_slipstreamTurn = next != 0 ? next : 0x80000000;
 }
 
 /// @addr{0x8053621C}
@@ -105,7 +169,10 @@ void RaceManager::DestroyInstance() {
 
 /// @addr{0x805327A0}
 RaceManager::RaceManager()
-    : m_random(RNG_SEED), m_playerCount(0), m_stage(Stage::Intro), m_introTimer(0), m_timer(0) {}
+    : m_random(RaceConfig::Instance()->raceScenario().seed1),
+      m_random2(RaceConfig::Instance()->raceScenario().seed2), m_playerCount(0),
+      m_stage(Stage::Intro), m_introTimer(0), m_timer(0), m_slipstreamSlots(0xFFF00000),
+      m_slipstreamTurn(0x80000000) {}
 
 /// @addr{0x80532E3C}
 RaceManager::~RaceManager() {
@@ -142,6 +209,9 @@ RaceManager::Player::Player() {
 /// @addr{0x80534194}
 void RaceManager::Player::init(u8 idx) {
     m_idx = idx;
+    // The RaceManager constructor (0x805327A0) starts each rank at the race config's grid place.
+    u8 startPlacement = RaceConfig::Instance()->raceScenario().players[idx].startPlacement;
+    m_rank = startPlacement > 0 ? startPlacement : static_cast<u8>(idx + 1);
     m_inputs = &KPadDirector::Instance()->playerInput(idx);
     auto *courseMap = CourseMap::Instance();
 

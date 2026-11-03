@@ -16,10 +16,14 @@ enum class Action {
     UNK_7 = 7,
     UNK_8 = 8,
     UNK_9 = 9,
+    LightningHit = 10, ///< Shrunk by lightning: a spin. Start @addr{0x8056804C}.
+    PowSpin = 11,      ///< A POW block's last shake on the ground. Start @addr{0x80568064}.
     UNK_12 = 12,
+    MegaSquash = 13,   ///< Squashed by a racer in a mega mushroom. Start @addr{0x80569818}.
     UNK_14 = 14,
     UNK_15 = 15,
     UNK_16 = 16,
+    PowHit = 17, ///< Hit by a POW block. Start @addr{0x8056804C}.
     Max = 18,
 };
 
@@ -27,6 +31,7 @@ class KartAction : KartObjectProxy {
 public:
     enum class eFlags {
         Landing = 0,
+        PowDodged = 1, ///< The POW spin was dodged with a trick input: a light spin.
         LargeFlip = 2,
         Rotating = 3,
         LandingFromFlip = 5,
@@ -39,7 +44,7 @@ public:
     void init();
     void calc();
     void calcVehicleSpeed();
-    bool start(Action action);
+    bool start(Action action, bool hitsMega = false);
     void startRotation(size_t idx);
 
     void setHitDepth(const EGG::Vector3f &hitDepth) {
@@ -53,6 +58,31 @@ public:
     [[nodiscard]] const Flags &flags() const {
         return m_flags;
     }
+
+    [[nodiscard]] Action currentAction() const {
+        return m_currentAction;
+    }
+
+    [[nodiscard]] u32 frame() const {
+        return m_frame;
+    }
+
+    /// @addr{0x805674F4}
+    void setPowAffected(bool affected) {
+        m_powAffected = affected;
+    }
+
+    /// @addr{0x8056754C}
+    /// @brief A POW block's last shake hits us this frame.
+    [[nodiscard]] bool isPowStriking() const {
+        return s_powStrike && m_powAffected;
+    }
+
+    bool dodgePow();
+
+    static void StartPowStrike(u8 stage);
+    static void CalcPowStrike();
+    static void ResetPowStrike();
 
 private:
     /// @brief Parameters specific to an action ID.
@@ -98,16 +128,21 @@ private:
      * ================================ */
 
     void startStub();
+    void startAction0();
     void startAction1();
     void startAction2();
     void startAction3();
     void startAction4();
+    void startAction6();
+    void startLightningAction();
     void startAction5();
     void startLargeFlipAction();
     void startAction9();
     void startLongPressAction();
     void startShortPressAction();
+    void startMegaSquashAction();
     void startSpinShrinkAction();
+    void startPowAction();
 
     /* ================================ *
      *     CALC FUNCTIONS
@@ -119,6 +154,7 @@ private:
     bool calcAction4();
     bool calcLargeFlipAction();
     bool calcPressAction();
+    bool calcPowAction();
 
     /* ================================ *
      *     END FUNCTIONS
@@ -160,6 +196,12 @@ private:
     EGG::Vector3f m_up;
     u16 m_framesFlipping;
     s16 m_priority;
+    bool m_powAffected; ///< +0xF8 Set at each POW shake: we are among its targets.
+
+    static bool s_powStrike;      ///< @addr{0x809C1898}
+    static s16 s_powStrikeTimer;  ///< @addr{0x809C189A}
+    static u8 s_powStage;         ///< @addr{0x809C189C}
+    static const ActionParams s_powSpinLateParams;
 
     static constexpr size_t MAX_ACTION = static_cast<size_t>(Action::Max);
 

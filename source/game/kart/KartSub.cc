@@ -3,11 +3,14 @@
 #include "game/kart/KartAction.hh"
 #include "game/kart/KartBody.hh"
 #include "game/kart/KartCollide.hh"
+#include "game/kart/KartKiller.hh"
 #include "game/kart/KartMove.hh"
 #include "game/kart/KartObject.hh"
 #include "game/kart/KartPullPath.hh"
 #include "game/kart/KartState.hh"
 #include "game/kart/KartSuspensionPhysics.hh"
+
+#include "game/enemy/AI.hh"
 
 #include "game/field/BoxColManager.hh"
 #include "game/field/CollisionDirector.hh"
@@ -27,6 +30,7 @@ KartSub::~KartSub() {
     EGG::egg_delete(m_state);
     EGG::egg_delete(m_move);
     EGG::egg_delete(m_action);
+    EGG::egg_delete(m_killer);
 }
 
 /// @addr{0x80595D48}
@@ -37,6 +41,7 @@ void KartSub::createSubsystems(bool isBike, const KartParam::Stats &stats) {
     m_move->createSubsystems(stats);
     m_state = EGG::egg_new<KartState>();
     m_collide = EGG::egg_new<KartCollide>();
+    m_killer = EGG::egg_new<KartKiller>();
 }
 
 /// @brief Called during static construction of KartObject to synchronize the pointers.
@@ -46,6 +51,7 @@ void KartSub::copyPointers(KartAccessor &pointers) {
     pointers.state = m_state;
     pointers.move = m_move;
     pointers.action = m_action;
+    pointers.killer = m_killer;
 }
 
 /// @addr{0x80595F78}
@@ -56,6 +62,7 @@ void KartSub::init() {
     move()->setTurnParams();
     action()->init();
     m_collide->init();
+    Enemy::AI::Init();
 }
 
 /// @addr{0x8059828C}
@@ -186,16 +193,25 @@ void KartSub::calcPass1() {
     m_maxSuspOvertravel.setZero();
     m_minSuspOvertravel.setZero();
 
-    // The flag is really 0x1f, but we only care about objects.
+    // The flag is really 0x1f, but we only care about drivers and objects.
     Field::BoxColFlag flags;
-    flags.setBit(Field::eBoxColFlag::Drivable, Field::eBoxColFlag::Object);
+    flags.setBit(Field::eBoxColFlag::Driver, Field::eBoxColFlag::Item,
+            Field::eBoxColFlag::Drivable, Field::eBoxColFlag::Object);
     boxColUnit()->search(flags);
 
+    auto *boxColManager = Field::BoxColManager::Instance();
+    while (KartObject *other = boxColManager->getNextPlayer()) {
+        collide()->calcPlayerCollision(other);
+    }
+
     collide()->calcObjectCollision();
-    collide()->calcKartCollision();
-    dynamics()->setPos(pos() + collide()->tangentOff());
 
     auto &status = KartObjectProxy::status();
+    if (status.offBit(eStatus::NoKartCollision82, eStatus::Vanished)) {
+        collide()->calcItemCollision();
+    }
+
+    dynamics()->setPos(pos() + collide()->tangentOff());
 
     if (status.onBit(eStatus::SoftWallPush)) {
         const EGG::Vector3f &softWallSpeed = state()->softWallSpeed();
@@ -254,6 +270,7 @@ void KartSub::calcPass1() {
         }
 
         collide()->calcFloorEffect();
+        collide()->calcPlayerBumpTimer();
         collide()->calcFloorMomentRate();
 
         if (colData.bFloor) {

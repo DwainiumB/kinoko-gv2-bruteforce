@@ -22,11 +22,22 @@ namespace Field {
 class ObjectCollidable;
 class ObjectDrivable;
 
+} // namespace Field
+
+namespace Item {
+
+class ItemObj;
+
+} // namespace Item
+
+namespace Field {
+
 /// @brief A bitfield that represents the state and type of a given BoxColUnit.
 /// @details The lower 8 bits represent the type, while the remaining bits represent the state.
 /// There are originally two flags for objects, but one is for CPUs, which we can ignore for now.
 enum class eBoxColFlag {
     Driver = 0,
+    Item = 1,
     Object = 3,
     Drivable = 4,
     PermRecalcAABB = 8, ///< Recalculate this unit's spatial indexing every frame.
@@ -82,6 +93,8 @@ public:
     void clear();
     void calc();
 
+    [[nodiscard]] Kart::KartObject *getNextPlayer();
+    [[nodiscard]] Item::ItemObj *getNextItem();
     [[nodiscard]] ObjectCollidable *getNextObject();
     [[nodiscard]] ObjectDrivable *getNextDrivable();
 
@@ -89,6 +102,8 @@ public:
 
     [[nodiscard]] BoxColUnit *insertDriver(f32 radius, f32 maxSpeed, const EGG::Vector3f *pos,
             bool alwaysRecalc, Kart::KartObject *kartObject);
+    [[nodiscard]] BoxColUnit *insertItem(f32 radius, f32 maxSpeed, const EGG::Vector3f *pos,
+            bool alwaysRecalc, Item::ItemObj *itemObj);
     [[nodiscard]] BoxColUnit *insertObject(f32 radius, f32 maxSpeed, const EGG::Vector3f *pos,
             bool alwaysRecalc, void *userData);
     [[nodiscard]] BoxColUnit *insertDrivable(f32 radius, f32 maxSpeed, const EGG::Vector3f *pos,
@@ -126,6 +141,8 @@ private:
 
     s32 m_unitCount;
     s32 m_nextUnitID;
+    s32 m_nextPlayerID;
+    s32 m_nextItemID;
     s32 m_nextObjectID;
     s32 m_nextDrivableID;
     s32 m_maxID;

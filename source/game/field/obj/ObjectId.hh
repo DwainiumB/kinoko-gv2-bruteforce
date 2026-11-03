@@ -107,7 +107,6 @@ enum class ObjectId {
 };
 
 enum class BlacklistedObjectId {
-    Itembox = 0x65,
     CastleTree2 = 0x131,
     CastleFlower1 = 0x132,
     MarioTreeGC = 0x133,
@@ -139,10 +138,6 @@ enum class BlacklistedObjectId {
 static constexpr bool IsObjectBlacklisted(u16 id) {
     BlacklistedObjectId objectId = static_cast<BlacklistedObjectId>(id);
     switch (objectId) {
-    // Disabled collision
-    case BlacklistedObjectId::Itembox:
-        return true;
-
     // No collision
     case BlacklistedObjectId::CastleTree2:
     case BlacklistedObjectId::CastleFlower1:

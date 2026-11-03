@@ -15,7 +15,7 @@ namespace Kinoko::Kart {
 KartAction::KartAction()
     : m_currentAction(Action::None), m_hitDepth(EGG::Vector3f::zero),
       m_translation(EGG::Vector3f::ez), m_onStart(nullptr), m_onCalc(nullptr), m_onEnd(nullptr),
-      m_actionParams(nullptr), m_rotationParams(nullptr), m_priority(0) {}
+      m_actionParams(nullptr), m_rotationParams(nullptr), m_priority(0), m_powAffected(false) {}
 
 /// @addr{0x8056A1A8}
 KartAction::~KartAction() = default;
@@ -45,14 +45,23 @@ void KartAction::calcVehicleSpeed() {
 /// @addr{0x805675DC}
 /// @brief Starts an action.
 /// @param action The action to start.
+/// @param hitsMega Whether the action can hit a kart in a mega mushroom (a star or a bullet bill
+/// can, objects and shells can't).
 /// @return Whether or not the action was started.
-bool KartAction::start(Action action) {
+bool KartAction::start(Action action, bool hitsMega) {
     ASSERT(action != Action::None);
 
     auto &status = KartObjectProxy::status();
 
-    if (status.onBit(eStatus::InRespawn, eStatus::AfterRespawn, eStatus::BeforeRespawn,
-                eStatus::InCannon)) {
+    // The game also refuses after a battle race ends; Kinoko has no battle mode.
+    if (status.onBit(eStatus::TriggerRespawn, eStatus::NoKartCollision40, eStatus::InRespawn,
+                eStatus::AfterRespawn, eStatus::NoKartCollision82, eStatus::Vanished,
+                eStatus::NoKartCollision89, eStatus::BeforeRespawn, eStatus::NoKartCollision72,
+                eStatus::InStar, eStatus::InCannon, eStatus::InBullet)) {
+        return false;
+    }
+
+    if (!hitsMega && status.onBit(eStatus::InMega)) {
         return false;
     }
 
@@ -109,6 +118,7 @@ void KartAction::startRotation(size_t idx) {
 
     m_rotationDirection = dir.cross(bodyFront()).dot(bodyUp()) > 0.0f ? 1.0f : -1.0f;
     setRotation(idx);
+    Item::ItemDirector::Instance()->kartItem(param()->playerIdx()).dropTrail(true);
     m_flags.setBit(eFlags::Rotating);
 }
 
@@ -248,7 +258,8 @@ void KartAction::startLaunch(f32 extVelScalar, f32 extVelKart, f32 extVelBike, f
 /// @addr{0x805696CC}
 void KartAction::activateCrush(u16 timer) {
     move()->activateCrush(m_crushTimer + timer);
-    Item::ItemDirector::Instance()->kartItem(0).clear();
+    status().setBit(eStatus::InCrushAction);
+    Item::ItemDirector::Instance()->kartItem(param()->playerIdx()).loseItem();
 }
 
 /// @addr{0x80567C68}
@@ -271,11 +282,74 @@ void KartAction::setRotation(size_t idx) {
     m_multiplier = 1.0f;
 }
 
+/// @addr{0x80568558}
+/// @brief A trick input during a POW spin: a strong spin (rotation 3 or more) still under 360
+/// degrees becomes the light one, keeping its angle.
+/// @return Whether it was dodged.
+bool KartAction::dodgePow() {
+    constexpr f32 MAX_ANGLE = 360.0f;
+    constexpr size_t LIGHT_ROTATION = 1;
+    constexpr size_t FIRST_STRONG_ROTATION = 3;
+
+    if (!m_rotationParams ||
+            static_cast<size_t>(m_rotationParams - s_rotationParams.data()) + 1 <
+                    FIRST_STRONG_ROTATION) {
+        return false;
+    }
+
+    if (!(m_currentAngle <= MAX_ANGLE)) {
+        return false;
+    }
+
+    f32 angle = m_currentAngle;
+    setRotation(LIGHT_ROTATION);
+    m_currentAngle = angle;
+    m_flags.setBit(eFlags::PowDodged);
+    // Status bit 130 (0x805917F4) is never set in Kinoko.
+    return true;
+}
+
+/// @addr{0x805674FC}
+/// @brief A POW block shakes: the last shake (stage 2) strikes its targets for 15 frames.
+void KartAction::StartPowStrike(u8 stage) {
+    constexpr u8 STRIKE_STAGE = 2;
+    constexpr s16 STRIKE_FRAMES = 15;
+
+    if (stage != STRIKE_STAGE) {
+        return;
+    }
+
+    s_powStrike = true;
+    s_powStrikeTimer = STRIKE_FRAMES;
+    s_powStage = stage;
+}
+
+/// @addr{0x80567594}
+void KartAction::CalcPowStrike() {
+    if (--s_powStrikeTimer < 0) {
+        s_powStrikeTimer = 0;
+        s_powStrike = false;
+    }
+}
+
+/// @addr{0x80567578}
+void KartAction::ResetPowStrike() {
+    s_powStrike = false;
+    s_powStrikeTimer = 0;
+    s_powStage = 0;
+}
+
 /* ================================ *
  *     START FUNCTIONS
  * ================================ */
 
 void KartAction::startStub() {}
+
+/// @addr{0x80567F68}
+/// @brief Action 0, the banana spin: one turn (rotation set 1). The rumble (0x8059041C) is left out.
+void KartAction::startAction0() {
+    startRotation(1);
+}
 
 /// @addr{0x80567FB4}
 void KartAction::startAction1() {
@@ -290,6 +364,7 @@ void KartAction::startAction2() {
     constexpr f32 NUM_ROTATIONS = 1.0f;
 
     startLaunch(EXT_VEL_SCALAR, EXT_VEL_KART, EXT_VEL_BIKE, NUM_ROTATIONS, 0);
+    Item::ItemDirector::Instance()->kartItem(param()->playerIdx()).dropTrail(true);
 }
 
 /// @addr{0x80568718}
@@ -300,7 +375,7 @@ void KartAction::startAction3() {
     constexpr f32 NUM_ROTATIONS = 1.0f;
 
     startLaunch(EXT_VEL_SCALAR, EXT_VEL_KART, EXT_VEL_BIKE, NUM_ROTATIONS, 1);
-    Item::ItemDirector::Instance()->kartItem(0).clear();
+    Item::ItemDirector::Instance()->kartItem(param()->playerIdx()).loseItem();
 }
 
 /// @addr{0x80568CB8}
@@ -311,7 +386,25 @@ void KartAction::startAction4() {
     constexpr f32 NUM_ROTATIONS = 2.0f;
 
     startLaunch(EXT_VEL_SCALAR, EXT_VEL_KART, EXT_VEL_BIKE, NUM_ROTATIONS, 1);
-    Item::ItemDirector::Instance()->kartItem(0).clear();
+    Item::ItemDirector::Instance()->kartItem(param()->playerIdx()).loseItem();
+}
+
+/// @addr{0x80569024}
+/// @brief Hit by a bullet bill: the action 4 launch, other variant.
+void KartAction::startAction6() {
+    constexpr f32 EXT_VEL_SCALAR = 25.0f;
+    constexpr f32 EXT_VEL_KART = 30.0f;
+    constexpr f32 EXT_VEL_BIKE = 30.0f;
+    constexpr f32 NUM_ROTATIONS = 2.0f;
+
+    startLaunch(EXT_VEL_SCALAR, EXT_VEL_KART, EXT_VEL_BIKE, NUM_ROTATIONS, 2);
+    Item::ItemDirector::Instance()->kartItem(param()->playerIdx()).loseItem();
+}
+
+/// @addr{0x8056804C}
+/// @brief Actions 10 (lightning) and 17 (POW): a spin.
+void KartAction::startLightningAction() {
+    startRotation(2);
 }
 
 /// @addr{0x80568FA4}
@@ -322,6 +415,7 @@ void KartAction::startAction5() {
     constexpr f32 NUM_ROTATIONS = 1.0f;
 
     startLaunch(EXT_VEL_SCALAR, EXT_VEL_KART, EXT_VEL_BIKE, NUM_ROTATIONS, 2);
+    Item::ItemDirector::Instance()->kartItem(param()->playerIdx()).dropTrail(false);
 }
 
 /// @addr{0x805690A0}
@@ -336,7 +430,7 @@ void KartAction::startLargeFlipAction() {
         dynamics()->setExtVel(dynamics()->extVel() + m_side * -20.0f);
     }
 
-    Item::ItemDirector::Instance()->kartItem(0).clear();
+    Item::ItemDirector::Instance()->kartItem(param()->playerIdx()).loseItem();
 
     m_deltaPitch = 0.0f;
     m_pitch = 0.0f;
@@ -370,9 +464,40 @@ void KartAction::startShortPressAction() {
     activateCrush(CRUSH_DURATION);
 }
 
+/// @addr{0x80569818}
+/// @brief Squashed by a mega mushroom: a 20-frame action and a 500-frame crush.
+void KartAction::startMegaSquashAction() {
+    constexpr u32 ACTION_DURATION = 20;
+    constexpr u16 CRUSH_DURATION = 480;
+
+    m_crushTimer = ACTION_DURATION;
+    activateCrush(CRUSH_DURATION);
+}
+
 /// @addr{0x80568058}
 void KartAction::startSpinShrinkAction() {
     startRotation(1);
+}
+
+/// @addr{0x80568064}
+/// @brief The POW block's last shake: a spin and a hop, and the items are lost. A trick input
+/// just before (KartMove's dodge window) makes it the light spin.
+void KartAction::startPowAction() {
+    constexpr f32 HOP = 20.0f;
+    constexpr size_t LIGHT_ROTATION = 1;
+    constexpr size_t STRONG_ROTATION = 3;
+
+    size_t rotation = STRONG_ROTATION;
+    if (move()->powDodgeTimer() > 0) {
+        rotation = LIGHT_ROTATION;
+        m_flags.setBit(eFlags::PowDodged);
+        // Status bit 130 (0x805917F4) is never set in Kinoko.
+    }
+
+    startRotation(rotation);
+    dynamics()->setExtVel(dynamics()->extVel() + EGG::Vector3f(0.0f, HOP, 0.0f));
+    // The rumble (0x8059041C, 0x80590F9C) is left out.
+    Item::ItemDirector::Instance()->kartItem(param()->playerIdx()).loseItem();
 }
 
 /* ================================ *
@@ -385,6 +510,23 @@ bool KartAction::calcStub() {
 
 /// @addr{0x80568204}
 bool KartAction::calcAction1() {
+    calcUp();
+    bool finished = calcRotation();
+
+    m_rotation.setAxisRotation(DEG2RAD * (m_currentAngle * m_rotationDirection), m_up);
+    physics()->composeExtraRot(m_rotation);
+    return finished;
+}
+
+/// @addr{0x805683B8}
+/// @brief The POW spin: as action 1's, but past one full turn the action slows the kart less.
+bool KartAction::calcPowAction() {
+    constexpr f32 LATE_ANGLE = 360.0f;
+
+    if (m_currentAngle > LATE_ANGLE) {
+        m_actionParams = &s_powSpinLateParams;
+    }
+
     calcUp();
     bool finished = calcRotation();
 
@@ -546,7 +688,7 @@ bool KartAction::calcPressAction() {
 
 void KartAction::endStub(bool /*arg*/) {}
 
-/// @addr{0x8056837C}
+/// @addr{0x8056837C} @addr{0x80568620}
 void KartAction::endAction1(bool arg) {
     if (arg) {
         physics()->composeDecayingExtraRot(m_rotation);
@@ -585,6 +727,13 @@ const std::array<KartAction::ActionParams, KartAction::MAX_ACTION> KartAction::s
         {0.98f, 0.98f, 3},
 }};
 
+/// The POW spin's parameters once it is past one turn (0x808B4D30).
+const KartAction::ActionParams KartAction::s_powSpinLateParams = {0.96f, 0.96f, 3};
+
+bool KartAction::s_powStrike = false;
+s16 KartAction::s_powStrikeTimer = 0;
+u8 KartAction::s_powStage = 0;
+
 const std::array<KartAction::RotationParams, 5> KartAction::s_rotationParams = {{
         {10.0f, 1.5f, 0.9f, 0.005f, 0.6f, 360.0f},
         {11.0f, 1.5f, 0.9f, 0.0028f, 0.7f, 720.0f},
@@ -594,66 +743,66 @@ const std::array<KartAction::RotationParams, 5> KartAction::s_rotationParams = {
 }};
 
 const std::array<KartAction::StartActionFunc, KartAction::MAX_ACTION> KartAction::s_onStart = {{
-        &KartAction::startStub,
+        &KartAction::startAction0,
         &KartAction::startAction1,
         &KartAction::startAction2,
         &KartAction::startAction3,
         &KartAction::startAction4,
         &KartAction::startAction5,
-        &KartAction::startStub,
+        &KartAction::startAction6,
         &KartAction::startLargeFlipAction,
         &KartAction::startLargeFlipAction,
         &KartAction::startAction9,
-        &KartAction::startStub,
-        &KartAction::startStub,
+        &KartAction::startLightningAction,
+        &KartAction::startPowAction,
         &KartAction::startLongPressAction,
-        &KartAction::startStub,
+        &KartAction::startMegaSquashAction,
         &KartAction::startShortPressAction,
         &KartAction::startSpinShrinkAction,
         &KartAction::startStub,
-        &KartAction::startStub,
+        &KartAction::startLightningAction,
 }};
 
 const std::array<KartAction::CalcActionFunc, KartAction::MAX_ACTION> KartAction::s_onCalc = {{
-        &KartAction::calcStub,
+        &KartAction::calcAction1,
         &KartAction::calcAction1,
         &KartAction::calcLaunchAction,
         &KartAction::calcLaunchAction,
         &KartAction::calcAction4,
         &KartAction::calcLaunchAction,
-        &KartAction::calcStub,
+        &KartAction::calcAction4,
         &KartAction::calcLargeFlipAction,
         &KartAction::calcLargeFlipAction,
         &KartAction::calcAction1,
-        &KartAction::calcStub,
-        &KartAction::calcStub,
+        &KartAction::calcAction1,
+        &KartAction::calcPowAction,
         &KartAction::calcPressAction,
-        &KartAction::calcStub,
+        &KartAction::calcPressAction,
         &KartAction::calcPressAction,
         &KartAction::calcAction1,
         &KartAction::calcStub,
-        &KartAction::calcStub,
+        &KartAction::calcAction1,
 }};
 
 const std::array<KartAction::EndActionFunc, KartAction::MAX_ACTION> KartAction::s_onEnd = {{
-        &KartAction::endStub,
+        &KartAction::endAction1,
         &KartAction::endAction1,
         &KartAction::endLaunchAction,
         &KartAction::endLaunchAction,
         &KartAction::endLaunchAction,
         &KartAction::endLaunchAction,
+        &KartAction::endLaunchAction,
+        &KartAction::endStub,
+        &KartAction::endStub,
+        &KartAction::endAction1,
+        &KartAction::endAction1,
+        &KartAction::endAction1,
         &KartAction::endStub,
         &KartAction::endStub,
         &KartAction::endStub,
         &KartAction::endAction1,
         &KartAction::endStub,
-        &KartAction::endStub,
-        &KartAction::endStub,
-        &KartAction::endStub,
-        &KartAction::endStub,
         &KartAction::endAction1,
-        &KartAction::endStub,
-        &KartAction::endStub,
 }};
 
 } // namespace Kinoko::Kart

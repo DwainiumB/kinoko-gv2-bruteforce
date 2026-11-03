@@ -36,6 +36,10 @@ public:
         return range * getF32();
     }
 
+    [[nodiscard]] u64 state() const {
+        return m_x;
+    }
+
 private:
     u64 m_x;
     u64 m_seed;

@@ -213,7 +213,8 @@ void BSP::read(EGG::RamStream &stream) {
     }
 
     rumbleHeight = stream.read_f32();
-    rumbleSpeed = stream.read_f32();
+    rumbleSpeed = stream.read_u16();
+    stream.read_u16(); // padding
 }
 
 KartParam::KartCameraParam::KartCameraParam() = default;

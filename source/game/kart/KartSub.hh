@@ -41,6 +41,7 @@ private:
     KartAction *m_action;
     KartCollide *m_collide;
     KartState *m_state;
+    KartKiller *m_killer; ///< The game creates it in Player_init (0x8058E22C).
     EGG::Vector3f m_maxSuspOvertravel;
     EGG::Vector3f m_minSuspOvertravel;
     u16 m_floorCollisionCount;

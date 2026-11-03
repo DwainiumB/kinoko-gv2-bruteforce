@@ -1,14 +1,34 @@
 #include "game/field/obj/ObjectVolcanoPiece.hh"
 
 #include "game/system/RaceManager.hh"
+#include "game/system/RaceConfig.hh"
 
 namespace Kinoko::Field {
+
+/// @brief Index of the rest-time setting for this race's engine class; the shake time follows it.
+static size_t VolcanoPieceRestSetting() {
+    using EngineClass = System::RaceConfig::Scenario::EngineClass;
+
+    const auto &scenario = System::RaceConfig::Instance()->raceScenario();
+    if (scenario.course == Course::Block_Plaza) {
+        return 1;
+    }
+
+    switch (scenario.engineClass) {
+    case EngineClass::CC100:
+        return 3;
+    case EngineClass::CC50:
+        return 5;
+    default:
+        return 1;
+    }
+}
 
 /// @addr{0x80817DE8}
 ObjectVolcanoPiece::ObjectVolcanoPiece(const System::MapdataGeoObj &params)
     : ObjectKCL(params), m_initialPos(pos()), m_initialRot(rot()),
-      m_restDuration(params.setting(1) * 60),
-      m_shakeDuration(m_restDuration + params.setting(2) * 60),
+      m_restDuration(params.setting(VolcanoPieceRestSetting()) * 60),
+      m_shakeDuration(m_restDuration + params.setting(VolcanoPieceRestSetting() + 1) * 60),
       m_quakeDuration(m_shakeDuration + params.setting(7) + 1), m_colMgrB(nullptr),
       m_colMgrC(nullptr) {
     snprintf(m_modelName, sizeof(m_modelName), "VolcanoPiece%hd",

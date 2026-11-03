@@ -120,6 +120,11 @@ public:
         m_noGravity = isSet;
     }
 
+    /// @brief A bike in a bullet bill stabilises like a kart (+0x174).
+    void setBikeAsKart(bool isSet) {
+        m_bikeAsKart = isSet;
+    }
+
     void setKillExtVelY(bool isSet) {
         m_killExtVelY = isSet;
     }
@@ -219,6 +224,7 @@ protected:
     bool m_forceUpright; ///< Specifies if we should return the vehicle to upwards orientation.
     bool m_noGravity;    ///< Disables gravity. Relevant when respawning.
     bool m_killExtVelY;  ///< Caps external velocity at 0.
+    bool m_bikeAsKart;   ///< A bike in a bullet bill stabilises like a kart (offset 0x174).
 };
 
 /// @brief State management for most components of a bike's physics

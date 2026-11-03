@@ -29,6 +29,9 @@ public:
     [[nodiscard]] EGG::RamStream getBikeDispParamsStream(Vehicle vehicle) const;
     [[nodiscard]] EGG::RamStream getKartDispParamsStream(Vehicle vehicle) const;
     [[nodiscard]] EGG::RamStream getKartCameraStream(Character character) const;
+    /// @brief Where the driver model sits on the vehicle: `(0, y, z)` from
+    /// kartDriverDispParam.bin (36 vehicles x 48 characters x 14 floats), the first two floats.
+    [[nodiscard]] EGG::Vector3f driverOffset(Vehicle vehicle, Character character) const;
 
     static KartParamFileManager *CreateInstance();
     static void DestroyInstance();
@@ -71,6 +74,7 @@ private:
     FileInfo m_bikeDispParam;   // bikePartsDispParam.bin
     FileInfo m_kartDispParam;   // kartPartsDispParam.bin
     FileInfo m_kartCameraParam; // kartCameraParam.bin
+    FileInfo m_driverDispParam; // kartDriverDispParam.bin
 
     static KartParamFileManager *s_instance;
 };

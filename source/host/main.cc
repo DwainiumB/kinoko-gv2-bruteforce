@@ -1,6 +1,8 @@
 #include "host/KReplaySystem.hh"
+#include "host/KVersusSystem.hh"
 #include "host/KTestSystem.hh"
 #include "host/Option.hh"
+#include "host/DriverItemAnchorTool.hh"
 
 #include <egg/core/ExpHeap.hh>
 
@@ -44,6 +46,7 @@ int main(int argc, char **argv) {
     const std::unordered_map<std::string, std::function<KSystem *()>> modeMap = {
             {"test", []() -> KSystem * { return KTestSystem::CreateInstance(); }},
             {"replay", []() -> KSystem * { return KReplaySystem::CreateInstance(); }},
+            {"versus", []() -> KSystem * { return KVersusSystem::CreateInstance(); }},
     };
 
     if (argc < 2) {
@@ -55,6 +58,14 @@ int main(int argc, char **argv) {
     // The first argument is the executable, so we ignore it
     // The second argument is the mode
     const std::string mode = argv[1];
+
+    // A standalone tool: builds Race/Kart/driverItemAnchors.bin from the player's kart archives.
+    if (mode == "item-anchors") {
+        if (argc < 4) {
+            PANIC("Usage: kinoko_host item-anchors <Race/Kart directory> <output file>");
+        }
+        return Host::GenerateDriverItemAnchors(argv[2], argv[3]) ? 0 : 1;
+    }
 
     auto it = modeMap.find(mode);
     if (it != modeMap.end()) {

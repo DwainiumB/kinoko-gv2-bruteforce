@@ -1,5 +1,9 @@
 #include "KartCollide.hh"
 
+#include "game/item/ItemDirector.hh"
+#include "game/item/ItemObjBlueShell.hh"
+#include "game/item/ItemObjBobOmb.hh"
+
 #include "game/kart/KartBody.hh"
 #include "game/kart/KartMove.hh"
 #include "game/kart/KartPhysics.hh"
@@ -36,6 +40,7 @@ void KartCollide::init() {
     m_respawnTimer = 0;
     m_solidOobTimer = 0;
     m_shrinkTimer = 0;
+    m_playerBumpTimer = 0;
     m_smoothedBack = 0.0f;
     m_sumHitboxBottomHeightFloorOnly = 0.0f;
     m_sumHitboxBottomHeightSoftWall = 0.0f;
@@ -558,6 +563,58 @@ void KartCollide::calcBoundingRadius() {
     m_boundingRadius = collisionGroup()->boundingRadius() * move()->hitboxScale();
 }
 
+/// @addr{0x8057257C}
+/// @brief Items touching the kart start their hit action (shell, fake item box: action 2, banana:
+/// action 0; none in a mega mushroom). Sounds, hit statistics, battle scoring, team checks and the
+/// ghost case (status bit 131) are left out.
+void KartCollide::calcItemCollision() {
+    std::array<Item::ItemObj *, Item::ItemDirector::MAX_KART_HITS> hits;
+    const auto *kart = Kart::KartObjectManager::Instance()->object(param()->playerIdx());
+    size_t count = Item::ItemDirector::Instance()->checkKartCollision(kart, hits);
+
+    auto &status = KartObjectProxy::status();
+    for (size_t i = 0; i < count; ++i) {
+        Action newAction = Action::None;
+
+        // The handler table 0x808B5468, by object kind.
+        switch (hits[i]->kind()) {
+        case Item::ItemObjKind::GreenShell:
+        case Item::ItemObjKind::RedShell:
+            // 0x80573190
+            newAction = status.onBit(eStatus::InMega) ? Action::None : Action::UNK_2;
+            break;
+        case Item::ItemObjKind::Banana:
+            // 0x80573178
+            newAction = status.onBit(eStatus::InMega) ? Action::None : Action::UNK_0;
+            break;
+        case Item::ItemObjKind::BlueShell:
+            // 0x805731B0
+            newAction = static_cast<Item::ItemObjBlueShell *>(hits[i])->explosionWeakened() ?
+                    Action::UNK_0 :
+                    Action::UNK_7;
+            break;
+        case Item::ItemObjKind::BobOmb:
+            // 0x805731C8
+            newAction = static_cast<Item::ItemObjBobOmb *>(hits[i])->explosionWeakened() ?
+                    Action::UNK_0 :
+                    Action::UNK_7;
+            break;
+        case Item::ItemObjKind::FakeItemBox:
+            // 0x8057325C: the battle team check is left out.
+            newAction = status.onBit(eStatus::InMega, eStatus::InStar, eStatus::InBullet) ?
+                    Action::None :
+                    Action::UNK_2;
+            break;
+        default:
+            break;
+        }
+
+        if (newAction != Action::None) {
+            static_cast<void>(action()->start(newAction));
+        }
+    }
+}
+
 /// @addr{0x80571F10}
 void KartCollide::calcObjectCollision() {
     constexpr f32 COS_PI_OVER_4 = 0.707f;
@@ -612,102 +669,296 @@ void KartCollide::calcObjectCollision() {
     calcPoleTimer();
 }
 
-/// Kart-to-kart collision -- see the header comment on this method for what this approximates and
-/// why.
-void KartCollide::calcKartCollision() {
-    using Kart::eStatus;
+/// @addr{0x8056F7F0}
+/// @brief Kart-to-kart collision with one other racer found by the box search in
+/// KartSub::calcPass1. Ported from the game; see docs/kart_collision_decomp.md.
+/// @details Each pair is handled once per frame, by whichever of the two karts gets there first:
+/// both karts are pushed apart by half the overlap through their tangent offset and movement,
+/// then (unless a star, mega or bullet decides the outcome) each one gets applyPlayerBump.
+/// Effects, sounds, rumble, CPU AI notifications, item hooks and battle scoring are left out:
+/// they do not touch kart physics.
+void KartCollide::calcPlayerCollision(KartObject *other) {
+    constexpr f32 HALF_OVERLAP = -0.5f;
+    constexpr Action ACTION_HIT_BY_STAR = Action::UNK_3;
+    constexpr Action ACTION_HIT_BY_BULLET = Action::UNK_6;
+    constexpr Action ACTION_HIT_BY_MEGA = Action::MegaSquash;
 
-    auto &status = KartObjectProxy::status();
-    if (status.onBit(eStatus::BeforeRespawn, eStatus::InRespawn, eStatus::TriggerRespawn,
-                eStatus::CannonStart, eStatus::InCannon, eStatus::AfterCannon, eStatus::Burnout)) {
+    KartObjectProxy *self = this;
+
+    if (IsPlayerCollisionDisabled(self) || IsPlayerCollisionDisabled(other)) {
         return;
     }
 
-    size_t selfIdx = param()->playerIdx();
-    size_t playerCount = System::RaceConfig::Instance()->raceScenario().playerCount;
-    auto *mgr = KartObjectManager::Instance();
-
-    for (size_t i = 0; i < playerCount; ++i) {
-        if (i == selfIdx) {
-            continue;
-        }
-
-        KartObject *other = mgr->object(i);
-        const auto &otherStatus = other->status();
-        if (otherStatus.onBit(eStatus::BeforeRespawn, eStatus::InRespawn, eStatus::TriggerRespawn,
-                    eStatus::CannonStart, eStatus::InCannon, eStatus::AfterCannon,
-                    eStatus::Burnout)) {
-            continue;
-        }
-
-        // A quick reject against the two karts' single combined bounding spheres before the real
-        // check below, which is worth doing since that one below is O(hitboxes^2).
-        EGG::Vector3f coarseDelta = pos() - other->pos();
-        f32 coarseMinDist = m_boundingRadius + other->collide()->boundingRadius();
-        if (coarseDelta.squaredLength() >= coarseMinDist * coarseMinDist) {
-            continue;
-        }
-
-        // The real per-vehicle hitbox shape: each kart's body is several spheres (this data is
-        // real, not a guess -- community-documented from the game files, e.g.
-        // https://docs.google.com/spreadsheets/d/1ohyehngjXd1cpbXR0gJVwS61aBKjsPaV0PmEtXcwsGI
-        // -- and Kinoko already loads the same BSP hitbox data for this exact CollisionGroup, just
-        // previously only used here as one crude combined circle via boundingRadius()). Using each
-        // hitbox's real position and radius instead makes the collision shape match the kart's
-        // actual elongated/offset body instead of a circle centred on it. The deepest-overlapping
-        // pair decides the push.
-        auto *myGroup = collisionGroup();
-        auto *otherGroup = other->collisionGroup();
-        f32 bestOverlap = 0.0f;
-        EGG::Vector3f hitDir = EGG::Vector3f::zero;
-        bool found = false;
-
-        for (u16 hi = 0; hi < myGroup->hitboxCount(); ++hi) {
-            const Hitbox &mine = myGroup->hitbox(hi);
-            for (u16 hj = 0; hj < otherGroup->hitboxCount(); ++hj) {
-                const Hitbox &theirs = otherGroup->hitbox(hj);
-                EGG::Vector3f delta = mine.worldPos() - theirs.worldPos();
-                f32 minDist = mine.radius() + theirs.radius();
-                f32 distSq = delta.squaredLength();
-                if (distSq >= minDist * minDist || distSq < std::numeric_limits<f32>::epsilon()) {
-                    continue;
-                }
-
-                f32 dist = EGG::Mathf::sqrt(distSq);
-                f32 overlap = minDist - dist;
-                if (overlap > bestOverlap) {
-                    bestOverlap = overlap;
-                    hitDir = delta / dist;
-                    found = true;
-                }
-            }
-        }
-
-        if (!found) {
-            continue;
-        }
-
-        // Weight isn't in the real SmallBump formula (it's only ever used against static objects
-        // there), but a real recording of bumps between two racers (via a Dolphin memory logger,
-        // kart_collision_logger.lua) shows the same asymmetry community documentation describes:
-        // one side of a bump consistently loses much more speed than the other. Splitting the push
-        // by weight share approximates that direction; equal weights still split evenly, a much
-        // heavier kart holds its line while the lighter one takes most of the push.
-        f32 myWeight = param()->stats().weight, otherWeight = other->param()->stats().weight;
-        f32 pushShare = otherWeight / std::max(1.0f, myWeight + otherWeight);
-
-        // The force magnitude (a straight reuse of SmallBump's 30.0f, scaled by weight share) was
-        // tuned against that same recording: 30.0f alone produced a ~29 unit/frame speed loss on
-        // the losing side of an equal-weight bump, versus a real ~6-8 measured in several clean
-        // events; 6.0f (kept in the same "double at pushShare=1, zero at pushShare=0" shape) landed
-        // within about 1 unit of the real value for a comparable encounter. An earlier version of
-        // this function also added a direct position correction, to keep two karts holding station
-        // side by side from just sitting overlapped; the same recording showed that was unrealistic
-        // (it dominated the whole effect, producing that ~29-unit anomaly on its own) and, in every
-        // recorded case, the velocity push alone was already enough to separate the pair within a
-        // few frames, so it was removed.
-        move()->applyForce(6.0f * (2.0f * pushShare), hitDir, false);
+    u8 selfIdx = param()->playerIdx();
+    u8 otherIdx = other->param()->playerIdx();
+    if (state()->kartPairMask() & (1 << otherIdx)) {
+        return;
     }
+
+    if (selfIdx == otherIdx) {
+        return;
+    }
+
+    state()->setKartPairMask(state()->kartPairMask() | static_cast<u16>(1 << otherIdx));
+    other->state()->setKartPairMask(other->state()->kartPairMask() | static_cast<u16>(1 << selfIdx));
+
+    EGG::BoundBox3f pushBox;
+    EGG::BoundBox3f contactBox;
+    pushBox.setZero();
+    contactBox.setZero();
+
+    if (!checkPlayerHitboxOverlap(pushBox, contactBox, other)) {
+        return;
+    }
+
+    EGG::Vector3f pushDir = pushBox.min + pushBox.max;
+    f32 overlap = pushDir.normalise();
+
+    EGG::Vector3f offset = pushDir * (HALF_OVERLAP * overlap);
+    m_tangentOff += offset;
+    m_movement += offset;
+
+    KartCollide *otherCollide = other->collide();
+    otherCollide->m_tangentOff += -offset;
+    otherCollide->m_movement += -offset;
+
+    // The game also checks RaceConfig's team flag here: karts of the same team always just bump.
+    // Kinoko has no teams, so that is always false.
+    const auto &selfStatus = status();
+    const auto &otherStatus = other->status();
+    bool selfStar = selfStatus.onBit(eStatus::InStar);
+    bool otherStar = otherStatus.onBit(eStatus::InStar);
+    bool selfMega = selfStatus.onBit(eStatus::InMega);
+    bool otherMega = otherStatus.onBit(eStatus::InMega);
+    bool selfCrushed = selfStatus.onBit(eStatus::Crushed);
+    bool otherCrushed = otherStatus.onBit(eStatus::Crushed);
+    bool selfBullet = selfStatus.onBit(eStatus::InBullet);
+    bool otherBullet = otherStatus.onBit(eStatus::InBullet);
+
+    bool bump = false;
+    if (selfBullet != otherBullet) {
+        if (otherBullet && !selfStar) {
+            action()->setHitDepth(-pushDir);
+            action()->start(ACTION_HIT_BY_BULLET, true);
+        } else if (selfBullet && !otherStar) {
+            other->action()->setHitDepth(pushDir);
+            other->action()->start(ACTION_HIT_BY_BULLET, true);
+        } else {
+            bump = true;
+        }
+    } else if (selfStar != otherStar) {
+        if (otherStar && !selfBullet) {
+            action()->setHitDepth(-pushDir);
+            action()->start(ACTION_HIT_BY_STAR, true);
+        } else if (selfStar && !otherBullet) {
+            other->action()->setHitDepth(pushDir);
+            other->action()->start(ACTION_HIT_BY_STAR, true);
+        } else {
+            bump = true;
+        }
+    } else if ((selfMega && !otherMega && !otherCrushed) ||
+            (otherMega && !selfMega && !selfCrushed)) {
+        if (otherMega) {
+            action()->start(ACTION_HIT_BY_MEGA);
+        } else {
+            other->action()->start(ACTION_HIT_BY_MEGA);
+        }
+    } else {
+        bump = true;
+    }
+
+    if (!bump) {
+        return;
+    }
+
+    // Each kart's sideways axis: its body's x axis, made perpendicular to its travel direction.
+    EGG::Vector3f otherSide = other->bodyForward().perpInPlane(other->move()->dir(), true);
+    EGG::Vector3f otherHitDir = pushDir.proj(otherSide);
+    otherHitDir.normalise();
+
+    EGG::Vector3f selfSide = bodyForward().perpInPlane(move()->dir(), true);
+    EGG::Vector3f selfHitDir = otherHitDir.proj(selfSide);
+    selfHitDir.normalise();
+
+    if (otherStatus.offBit(eStatus::InBullet)) {
+        applyPlayerBump(1.0f, self, other, otherHitDir, pushDir);
+    }
+
+    if (selfStatus.offBit(eStatus::InBullet)) {
+        applyPlayerBump(-1.0f, other, self, selfHitDir, pushDir);
+    }
+
+    if (isBike() && selfStatus.onBit(eStatus::Wheelie)) {
+        move()->startWheelieBumpWobble();
+    }
+
+    if (other->isBike() && otherStatus.onBit(eStatus::Wheelie)) {
+        other->move()->startWheelieBumpWobble();
+    }
+
+    move()->onPlayerBump();
+    other->move()->onPlayerBump();
+}
+
+/// @addr{Inlined in 0x8056F7F0}
+/// @brief While any of these is set, a kart takes part in no kart-kart collision.
+bool KartCollide::IsPlayerCollisionDisabled(const KartObjectProxy *kart) {
+    const auto &status = kart->status();
+    if (status.onBit(eStatus::TriggerRespawn, eStatus::NoKartCollision40, eStatus::InRespawn,
+                eStatus::AfterRespawn, eStatus::NoKartCollision82, eStatus::Vanished,
+                eStatus::NoKartCollision89, eStatus::Ghost, eStatus::CannonStart,
+                eStatus::InCannon, eStatus::NoKartCollision72, eStatus::AfterCannon)) {
+        return true;
+    }
+
+    return status.onBit(eStatus::Crushed) && status.onBit(eStatus::InCrushAction);
+}
+
+/// @addr{0x8056EEF4}
+/// @brief Tests every pair of body hitboxes of the two karts. For each overlapping pair, grows
+/// pushBox by (unit vector towards the other kart's sphere * overlap depth) and contactBox by the
+/// point on our sphere facing it. Both boxes start at zero.
+/// @return Whether any pair overlaps.
+bool KartCollide::checkPlayerHitboxOverlap(EGG::BoundBox3f &pushBox, EGG::BoundBox3f &contactBox,
+        KartObject *other) {
+    bool found = false;
+    CollisionGroup *mine = collisionGroup();
+    CollisionGroup *theirs = other->collisionGroup();
+
+    for (u16 i = 0; i < mine->hitboxCount(); ++i) {
+        const Hitbox &hitbox = mine->hitbox(i);
+
+        for (u16 j = 0; j < theirs->hitboxCount(); ++j) {
+            const Hitbox &otherHitbox = theirs->hitbox(j);
+
+            EGG::Vector3f toOther = otherHitbox.worldPos() - hitbox.worldPos();
+            f32 radiusSum = hitbox.radius() + otherHitbox.radius();
+            f32 radiusSumSq = radiusSum * radiusSum;
+            f32 distSq = toOther.squaredLength();
+
+            if (radiusSumSq - distSq <= 0.0f) {
+                continue;
+            }
+
+            f32 depth = EGG::Mathf::sqrt(radiusSumSq) - EGG::Mathf::sqrt(distSq);
+            toOther.normalise();
+
+            EGG::Vector3f contact = hitbox.worldPos() + toOther * hitbox.radius();
+            contactBox.min = contactBox.min.minimize(contact);
+            contactBox.max = contactBox.max.maximize(contact);
+
+            toOther *= depth;
+            pushBox.min = pushBox.min.minimize(toOther);
+            pushBox.max = pushBox.max.maximize(toOther);
+
+            found = true;
+        }
+    }
+
+    return found;
+}
+
+/// @addr{0x80570DA8}
+/// @brief The bump itself, applied to target: a sideways force and wrench, a speed loss, a spin
+/// kick and a 10-frame bump timer during which target takes no further bump.
+/// @param sign +1 when target is the other kart, -1 when it is us.
+/// @param hitDir target's sideways axis, signed along the push.
+/// @param pushDir Unit vector from us towards the other kart.
+/// @details Note the game uses OUR weight class and bump deviation level for both targets, not
+/// target's.
+void KartCollide::applyPlayerBump(f32 sign, const KartObjectProxy *source, KartObjectProxy *target,
+        const EGG::Vector3f &hitDir, const EGG::Vector3f &pushDir) {
+    constexpr f32 BOOST_WEIGHT_FACTOR = 1.5f;
+    constexpr f32 TARGET_BOOST_WEIGHT_FACTOR = 0.5f;
+    constexpr f32 BASE_STRENGTH = 3.0f;
+    constexpr f32 STRENGTH_PER_SPEED = 0.11f;
+    constexpr f32 MAX_STRENGTH = 100.0f;
+    constexpr f32 WEIGHT_CLASS_OFFSET_FACTOR = 0.3f;
+    constexpr f32 OVER_ZIPPER_FORCE_FACTOR = 0.2f;
+    constexpr f32 LONG_AIRTIME_FORCE_FACTOR = 0.5f;
+    constexpr f32 SPEED_LOSS_FACTOR = 0.5f;
+    constexpr f32 SPIN_KICK_FACTOR = 0.05f;
+    constexpr s16 PLAYER_BUMP_TIME = 10;
+
+    KartCollide *targetCollide = target->collide();
+    if (targetCollide->m_playerBumpTimer > 0) {
+        return;
+    }
+
+    Item::ItemDirector::Instance()->passThunderCloud(
+            static_cast<u8>(source->param()->playerIdx()),
+            static_cast<u8>(target->param()->playerIdx()));
+
+    const auto &sourceStatus = source->status();
+    auto &targetStatus = target->status();
+
+    f32 sourceWeight = source->param()->stats().weight;
+    f32 targetWeight = target->param()->stats().weight;
+
+    if (sourceStatus.onBit(eStatus::SlipstreamBoost) && sourceWeight < targetWeight) {
+        sourceWeight = targetWeight;
+    }
+
+    if (targetStatus.onBit(eStatus::SlipstreamBoost) && targetWeight < sourceWeight) {
+        targetWeight = sourceWeight;
+    }
+
+    // A mushroom or boost panel boost (KartMove +0x118 & 4), checked against a Dolphin recording.
+    if (source->move()->boost().active(KartBoost::Type::MushroomAndBoostPanel)) {
+        sourceWeight *= BOOST_WEIGHT_FACTOR;
+    }
+
+    // The game scales the source's weight here too, not the target's.
+    if (target->move()->boost().active(KartBoost::Type::MushroomAndBoostPanel)) {
+        sourceWeight *= TARGET_BOOST_WEIGHT_FACTOR;
+    }
+
+    f32 weightRatio = sourceWeight / targetWeight;
+
+    const EGG::Vector3f &targetUp = target->move()->smoothedUp();
+    EGG::Vector3f dir = hitDir.perpInPlane(targetUp, true);
+
+    f32 strength = weightRatio *
+            (BASE_STRENGTH + STRENGTH_PER_SPEED * EGG::Mathf::abs(source->move()->speed()));
+    strength = std::min(strength, MAX_STRENGTH);
+
+    const auto &ownerStats = param()->stats();
+    f32 weightClass = static_cast<f32>(static_cast<u32>(ownerStats.weightClass));
+    f32 offsetScale = (WEIGHT_CLASS_OFFSET_FACTOR * (1.0f + weightClass)) *
+            (-sign * targetCollide->boundingRadius());
+    EGG::Vector3f wrenchPoint = target->pos() + pushDir * offsetScale;
+
+    f32 force = sign * strength;
+    if (targetStatus.onBit(eStatus::OverZipper)) {
+        force *= OVER_ZIPPER_FORCE_FACTOR;
+    } else if (targetStatus.onBit(eStatus::AirtimeOver20)) {
+        force *= LONG_AIRTIME_FORCE_FACTOR;
+    }
+
+    EGG::Vector3f push = (dir * force).rej(targetUp);
+    target->dynamics()->addForce(push);
+    target->dynamics()->applyWrenchScaled(wrenchPoint, push, ownerStats.bumpDeviationLevel);
+
+    f32 speed = target->move()->speed();
+    f32 absSpeed = EGG::Mathf::abs(speed);
+    f32 slowedSpeed =
+            std::max(absSpeed - SPEED_LOSS_FACTOR * strength, SPEED_LOSS_FACTOR * absSpeed);
+    target->move()->setSpeed(slowedSpeed * (speed < 0.0f ? -1.0f : 1.0f));
+
+    targetCollide->m_playerBumpTimer = PLAYER_BUMP_TIME;
+    targetCollide->startFloorMomentRate();
+    targetStatus.setBit(eStatus::FloorMomentRateReset);
+
+    f32 spinAxisY = dir.cross(componentZAxis()).y;
+    f32 spinSign = spinAxisY < 0.0f ? 1.0f : -1.0f;
+    EGG::Vector3f angVel0 = target->dynamics()->angVel0();
+    angVel0 += EGG::Vector3f(0.0f, 0.0f, spinSign * (SPIN_KICK_FACTOR * strength));
+    target->dynamics()->setAngVel0(angVel0);
+}
+
+/// @addr{0x805713B8}
+void KartCollide::calcPlayerBumpTimer() {
+    m_playerBumpTimer = std::max<s16>(0, m_playerBumpTimer - 1);
 }
 
 /// @addr{Inlined in 0x80571F10}

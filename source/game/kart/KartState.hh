@@ -46,6 +46,10 @@ public:
     void setTrickableTimer(s16 val) {
         m_trickableTimer = val;
     }
+
+    void setKartPairMask(u16 mask) {
+        m_kartPairMask = mask;
+    }
     /// @endSetters
 
     /// @beginGetters
@@ -97,6 +101,10 @@ public:
         return m_trickableTimer;
     }
 
+    [[nodiscard]] u16 kartPairMask() const {
+        return m_kartPairMask;
+    }
+
     [[nodiscard]] Status &status() {
         return m_status;
     }
@@ -123,6 +131,9 @@ private:
     size_t m_startBoostIdx; ///< Used to map @ref m_startBoostCharge to a start boost duration.
     s16 m_wallBonkTimer;    ///< 2f counter that stunts your speed after hitting a wall. @rename
     s16 m_trickableTimer;
+    /// Bit i is set once this kart's collision with player i was handled this frame (offset 0x84).
+    /// Cleared for every kart at the start of each frame by KartObjectManager::calc.
+    u16 m_kartPairMask;
 };
 
 } // namespace Kinoko::Kart

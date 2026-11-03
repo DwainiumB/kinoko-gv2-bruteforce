@@ -18,6 +18,9 @@ namespace Kinoko::Kart {
 /// @nosubgrouping
 class KartMove : protected KartObjectProxy {
 public:
+    /// @brief The bullet bill's speed and hard speed limit (0x808B59F8).
+    static constexpr f32 BULLET_SPEED = 145.0f;
+
     enum class ePadType {
         BoostPanel = 0,
         BoostRamp = 1,
@@ -102,6 +105,9 @@ public:
     virtual void hop();
     virtual void onHop() {}
     virtual void onWallCollision() {}
+    /// @addr{0x80570D20}
+    /// @brief Called on both karts after a kart-kart bump (KartMove vtable +0x30). Nothing for karts.
+    virtual void onPlayerBump() {}
     virtual void calcMtCharge();
     virtual void initOob();
 
@@ -157,6 +163,10 @@ public:
     void landTrick();
     void activateCrush(u16 timer);
     void calcCrushed();
+    void startWheelieBumpWobble();
+    void calcWheelieBumpWobble();
+    void calcSlipstream();
+    void clearSlipstream();
     void calcScale();
 
     /// @addr{0x80580768}
@@ -165,8 +175,26 @@ public:
     }
 
     void applyShrink(u16 timer);
+    [[nodiscard]] bool applyLightning();
+    void applyThunderCloud();
+    bool applyLightningEffect(s16 timer, bool fromObject, bool fromPow);
     void calcShock();
     void deactivateShock(bool resetSpeed);
+
+    void activateStar();
+    void calcStar();
+    void activateMega();
+    void calcMega();
+    void deactivateMega(bool resetScale);
+    void setObjectCollisionScale(f32 scale);
+    void calcPow();
+    void activateBullet();
+    void clearForBullet();
+    void applyInk(bool fromSelf);
+    void calcInk();
+    void clearInk();
+    void activateThunderCloud();
+    void deactivateThunderCloud();
 
     void enterCannon();
     void calcCannon();
@@ -214,6 +242,33 @@ public:
         m_hardSpeedLimit = LIMIT;
     }
 
+    /// @addr{0x8057B9AC}
+    void setRegularHardSpeedLimit() {
+        setKartSpeedLimit();
+    }
+
+    /// @addr{0x8057B99C}
+    void setBulletHardSpeedLimit() {
+        m_hardSpeedLimit = BULLET_SPEED;
+    }
+
+    /// @brief The bullet bill's size factor (offset 0x180): 1.5 in a bullet, else 1.0.
+    void setBulletScale(f32 scale) {
+        m_bulletScale = scale;
+    }
+
+    void setHitboxScale(f32 scale) {
+        m_hitboxScale = scale;
+    }
+
+    /// @brief The bullet bill's up axis target and rate (offsets 0x19C and 0x198), also the up
+    /// vector (0x8059D0C0).
+    void setBulletTop(const EGG::Vector3f &top, f32 rate) {
+        m_bulletTop = top;
+        m_up = top;
+        m_bulletTopRate = rate;
+    }
+
     /// @addr{0x80581720}
     void setScale(const EGG::Vector3f &v) {
         m_scale = v;
@@ -225,6 +280,10 @@ public:
     /// @endSetters
 
     /// @beginGetters
+    [[nodiscard]] s16 powDodgeTimer() const {
+        return m_powDodgeTimer;
+    }
+
     [[nodiscard]] DriftState driftState() const {
         return m_driftState;
     }
@@ -236,6 +295,10 @@ public:
 
     [[nodiscard]] u16 mtCharge() const {
         return m_mtCharge;
+    }
+
+    [[nodiscard]] u16 smtCharge() const {
+        return m_smtCharge;
     }
 
     [[nodiscard]] f32 kclSpeedFactor() const {
@@ -251,6 +314,11 @@ public:
     /// @return 0.0f if we are too slow to drift, otherwise the hop direction.
     [[nodiscard]] s32 getAppliedHopStickX() const {
         return canStartDrift() ? m_hopStickX : 0;
+    }
+
+    /// @addr{0x805910B0}
+    [[nodiscard]] f32 baseSpeed() const {
+        return m_baseSpeed;
     }
 
     [[nodiscard]] f32 softSpeedLimit() const {
@@ -429,6 +497,8 @@ protected:
     u16 m_mtCharge;          ///< A value between 0 and 270 representing current MT charge.
     u16 m_smtCharge;         ///< A value between 0 and 300 representing current SMT charge.
     f32 m_outsideDriftBonus; ///< Added to angular velocity when outside drifting.
+    u32 m_slipstreamTimer;   ///< Frames charging, then frames boosting (offset 0xEC).
+    f32 m_slipstreamFactor;  ///< 1.0, ramps to 1.1 while charging, 1.4 while boosting (0xF0).
     KartBoost m_boost;
     s16 m_zipperBoostTimer;
     s16 m_zipperBoostMax;
@@ -441,11 +511,23 @@ protected:
     f32 m_weightedTurn;    ///< Magnitude+direction of stick input, factoring in the kart's stats.
     EGG::Vector3f m_scale; ///< Normally the unit vector, but may vary due to crush animations.
     f32 m_totalScale;      ///< @unused Always 1.0f
+    f32 m_engineSpeedFactor; ///< 0.8 / 0.9 / 1.0 / 0.7 for 50cc / 100cc / 150cc / battle (0x10).
     f32 m_hitboxScale;
     f32 m_shockSpeedMultiplier;
     u16 m_mushroomBoostTimer; ///< Number of frames until the mushroom boost runs out.
     f32 m_invScale;
     u16 m_shockTimer;
+    s16 m_starTimer;      ///< Frames of star left (offset 0x18A).
+    s16 m_inkTimer;       ///< Frames of blooper ink left (offset 0x18E).
+    bool m_inkPending;    ///< Ink not yet faded in on screen (offset 0x190). Visual only.
+    f32 m_bulletScale;    ///< 1.5 in a bullet bill, else 1.0 (offset 0x180).
+    f32 m_bulletTopRate;  ///< (offset 0x198)
+    EGG::Vector3f m_bulletTop; ///< (offset 0x19C)
+    s16 m_powDodgeTimer;  ///< Frames a POW spin would still be the light one (offset 0x152).
+    bool m_powHit;        ///< A POW spin reached its hit frame (offset 0x154). Not read yet.
+    s16 m_megaTimer;      ///< Frames of mega mushroom left (offset 0x194).
+    bool m_megaShrinking; ///< The mega's shrink back has started (offset 0x196).
+    f32 m_megaScale;      ///< 1.0, ramps to the stats' mega scale while big (offset 0x17C).
     u16 m_crushTimer; ///< Number of frames until player will be uncrushed.
     u32 m_nonZipperAirtime;
     f32 m_jumpPadMinSpeed; ///< Snaps the player to a minimum speed when first touching a jump pad.
@@ -468,6 +550,9 @@ protected:
     s16 m_respawnPreLandTimer;  ///< Counts down from 4 when pressing A before landing from respawn.
     s16 m_respawnPostLandTimer; ///< Counts up to 4 if not accelerating after respawn landing.
     s16 m_respawnTimer;
+    s16 m_wheelieBumpWobbleTimer;  ///< Frames since a bump knocked this bike out of a wheelie.
+    u16 m_wheelieBumpWobblePhase;  ///< Sine phase of the wobble, 65536 = one turn. Never reset by a bump.
+    f32 m_wheelieBumpWobbleAngle;  ///< Last yaw rate added by the wobble.
     s16 m_bumpTimer;                     ///< Set when a @ref Reaction::SmallBump collision occurs.
     DrivingDirection m_drivingDirection; ///< Current state of driver's direction.
     s16 m_backwardsAllowCounter;         ///< Tracks the 15f delay before reversing.
@@ -516,6 +601,7 @@ public:
     void calcWheelie() override;
     void onHop() override;
     void onWallCollision() override;
+    void onPlayerBump() override;
     void calcMtCharge() override;
     void initOob() override;
     void setTurnParams() override;

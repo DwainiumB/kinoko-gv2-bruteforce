@@ -7,6 +7,8 @@
 #include "game/system/map/MapdataCheckPoint.hh"
 #include "game/system/map/MapdataFileAccessor.hh"
 #include "game/system/map/MapdataGeoObj.hh"
+#include "game/system/map/MapdataItemPath.hh"
+#include "game/system/map/MapdataItemPoint.hh"
 #include "game/system/map/MapdataJugemPoint.hh"
 #include "game/system/map/MapdataPointInfo.hh"
 #include "game/system/map/MapdataStageInfo.hh"
@@ -92,6 +94,50 @@ public:
         return i < getPointInfoCount() ? m_pointInfo->get(i) : nullptr;
     }
 
+    /// @addr{0x80514D3C}
+    [[nodiscard]] MapdataItemPoint *getItemPoint(u16 i) const {
+        return i < getItemPointCount() ? m_itemPoint->get(i) : nullptr;
+    }
+
+    [[nodiscard]] MapdataItemPath *getItemPath(u16 i) const {
+        return i < getItemPathCount() ? m_itemPath->get(i) : nullptr;
+    }
+
+    /// @addr{0x80512CEC}
+    [[nodiscard]] u16 getItemPointCount() const {
+        return m_itemPoint ? m_itemPoint->size() : 0;
+    }
+
+    [[nodiscard]] u16 getItemPathCount() const {
+        return m_itemPath ? m_itemPath->size() : 0;
+    }
+
+    /// @addr{0x805181F0}
+    /// @return The i-th item point after point idx, or 0xFF.
+    [[nodiscard]] u8 getNextItemPoint(u8 idx, u8 i) const {
+        const MapdataItemPoint *point = getItemPoint(idx);
+        return point && i < MapdataItemPoint::MAX_LINKS ? point->next(i) : MapdataItemPoint::NONE;
+    }
+
+    /// @addr{0x80518268}
+    [[nodiscard]] u8 getNextItemPointCount(u8 idx) const {
+        const MapdataItemPoint *point = getItemPoint(idx);
+        return point ? point->nextCount() : 0;
+    }
+
+    /// @addr{0x805182CC}
+    /// @return The i-th item point before point idx, or 0xFF.
+    [[nodiscard]] u8 getPrevItemPoint(u8 idx, u8 i) const {
+        const MapdataItemPoint *point = getItemPoint(idx);
+        return point && i < MapdataItemPoint::MAX_LINKS ? point->prev(i) : MapdataItemPoint::NONE;
+    }
+
+    /// @addr{0x80518344}
+    [[nodiscard]] u8 getPrevItemPointCount(u8 idx) const {
+        const MapdataItemPoint *point = getItemPoint(idx);
+        return point ? point->prevCount() : 0;
+    }
+
     /// @addr{0x80518920}
     [[nodiscard]] MapdataJugemPoint *getJugemPoint(u16 i) const {
         return i < getJugemPointCount() ? m_jugemPoint->get(i) : nullptr;
@@ -135,6 +181,8 @@ public:
     [[nodiscard]] u16 getJugemPointCount() const {
         return m_jugemPoint ? m_jugemPoint->size() : 0;
     }
+
+    [[nodiscard]] u16 getEnemyPathCount() const;
 
     [[nodiscard]] u16 getStageInfoCount() const {
         return m_stageInfo ? m_stageInfo->size() : 0;
@@ -212,6 +260,8 @@ private:
     MapdataGeoObjAccessor *m_geoObj;
     MapdataAreaAccessor *m_area;
     MapdataJugemPointAccessor *m_jugemPoint;
+    MapdataItemPathAccessor *m_itemPath;   ///< +0x14
+    MapdataItemPointAccessor *m_itemPoint; ///< +0x18
     MapdataCannonPointAccessor *m_cannonPoint;
     MapdataStageInfoAccessor *m_stageInfo;
 
