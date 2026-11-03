@@ -878,7 +878,9 @@ void ItemObj::calcDropped() {
 
     bool survives = properties().survivesHits;
     m_pos += m_vel;
-    m_vel *= DRAG;
+    // Only the horizontal speed is slowed.
+    m_vel.x *= DRAG;
+    m_vel.z *= DRAG;
 
     bool wall = false;
     if (checkSphereFull(m_kclRadius, 0x6CEBDFFF)) {
