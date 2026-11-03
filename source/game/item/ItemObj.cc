@@ -585,6 +585,21 @@ void ItemObj::startRelease(const EGG::Vector3f &kartPos) {
     m_flags.setBit(eFlags::FromKart);
 }
 
+/// @brief The object part of an item dropped by a course object (0x8079A12C): it starts at pos,
+/// small, and is thrown out with vel.
+void ItemObj::placeFromObject(const EGG::Vector3f &pos, const EGG::Vector3f &vel) {
+    constexpr f32 SCALE = 0.7f;
+
+    startRelease(pos);
+    // 0x807A3474: the model basis (visual); it also clears the release flag.
+    m_flags.resetBit(eFlags::Released);
+    m_scale = SCALE;
+    m_scaleVec = EGG::Vector3f(SCALE, SCALE, SCALE);
+    placeDropped(0, pos, EGG::Vector3f::zero, EGG::Vector3f::ey);
+    m_vel += vel;
+    m_flags.setBit(eFlags::OwnerImmune7);
+}
+
 /// @addr{0x807A25B0}
 /// @brief The first frames after a release. A forward throw sits in the driver's hand
 /// (0x807D171C, the "throw_f" anchor) on frames 0 and 1; a drop keeps following the kart on those

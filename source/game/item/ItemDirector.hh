@@ -30,6 +30,8 @@ public:
     void calc();
     void activateLightning(size_t userIdx);
     void spawnThunderCloud(u8 playerIdx);
+    void spawnFromObject(ItemObjKind kind, const EGG::Vector3f &pos, const EGG::Vector3f &vel,
+            u8 playerIdx);
     void passThunderCloud(u8 fromIdx, u8 toIdx);
     [[nodiscard]] size_t checkKartCollision(const Kart::KartObject *kart,
             std::array<ItemObj *, MAX_KART_HITS> &hits);

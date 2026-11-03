@@ -221,6 +221,7 @@ protected:
     void setScaleTrailVec(const EGG::Vector3f &kartScale);
     [[nodiscard]] bool growScale(f32 max, f32 step);
     void startRelease(const EGG::Vector3f &kartPos);
+    void placeFromObject(const EGG::Vector3f &pos, const EGG::Vector3f &vel);
     void calcRelease();
     void placeInDriverHand(bool forward);
     void calcItemCollision();

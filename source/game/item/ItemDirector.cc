@@ -115,6 +115,38 @@ void ItemDirector::spawnThunderCloud(u8 playerIdx) {
     // The online event is left out.
 }
 
+/// @addr{0x80799FBC}
+/// @brief A course object (a broken wooden box) drops an item of this kind, owned by playerIdx.
+/// @details The game skips remote racers (player type 4), which Kinoko does not have, and builds
+/// the model's basis from the velocity (visual). Kinds whose objects are not ported drop nothing.
+void ItemDirector::spawnFromObject(ItemObjKind kind, const EGG::Vector3f &pos,
+        const EGG::Vector3f &vel, u8 playerIdx) {
+    if (playerIdx >= m_karts.size()) {
+        return;
+    }
+
+    // 0x8079A12C
+    auto &objHolder = holder(kind);
+    if (!objHolder.canSpawn()) {
+        return;
+    }
+
+    s32 inUse = objHolder.spawnedCount() + heldCount(kind);
+    if (objHolder.room() - inUse <= 0) {
+        return;
+    }
+
+    ItemObj *obj = nullptr;
+    objHolder.spawn(1, &obj, playerIdx, pos);
+    if (!obj) {
+        return;
+    }
+
+    obj->m_flags.setBit(ItemObj::eFlags::Direct);
+    objHolder.activate(obj);
+    obj->placeFromObject(pos, vel);
+}
+
 /// @addr{0x8079A578}
 /// @brief Two racers bumped: a thunder cloud over the first one may move over to the second.
 void ItemDirector::passThunderCloud(u8 fromIdx, u8 toIdx) {

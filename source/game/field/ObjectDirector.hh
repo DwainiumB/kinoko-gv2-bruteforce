@@ -6,6 +6,8 @@
 #include "game/field/obj/ObjectCollidable.hh"
 #include "game/field/obj/ObjectNoImpl.hh"
 
+#include "game/system/Random.hh"
+
 #include <egg/core/Allocator.hh>
 
 #include <vector>
@@ -88,6 +90,7 @@ public:
         return m_timeTrial;
     }
 
+    [[nodiscard]] System::Random &random() const;
     [[nodiscard]] f32 distAboveRisingWater(f32 offset) const;
     [[nodiscard]] f32 risingWaterKillPlaneHeight() const;
 

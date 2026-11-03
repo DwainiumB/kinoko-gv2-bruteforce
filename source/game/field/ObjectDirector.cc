@@ -8,6 +8,7 @@
 
 #include "game/system/CourseMap.hh"
 #include "game/system/RaceConfig.hh"
+#include "game/system/RaceManager.hh"
 
 namespace Kinoko::Field {
 
@@ -108,6 +109,13 @@ size_t ObjectDirector::checkKartObjectCollision(Kart::KartObject *kartObj,
     }
 
     return count;
+}
+
+/// @addr{0x80782F74}
+/// @brief The generator course objects draw from: RaceManager's second one online, else the first.
+System::Random &ObjectDirector::random() const {
+    auto *raceMgr = System::RaceManager::Instance();
+    return m_online ? raceMgr->random2() : raceMgr->random();
 }
 
 /// @addr{0x8082B3EC}
