@@ -1,0 +1,714 @@
+# Kart-to-kart collision: decompilation notes (PAL RMCP01)
+
+Annotated pseudo-C of the game's kart-vs-kart collision, written from Ghidra 12.1.3 output plus a hand read of the
+assembly (capstone with paired singles). Every field is named by role; the raw offset is kept in the comment. These
+notes are what `KartCollide::calcPlayerCollision` and its helpers in `source/game/kart/KartCollide.cc` were ported from.
+No game bytes are reproduced here.
+
+How the listing was produced (all outside the repo): `main.dol` sections plus `StaticR.rel` relocated in place
+(sections at module base + file offset, base `0x805102E0`, `.text` at `0x805103B4`, `.bss` at `0x809BD6E0`; 114766
+relocations applied), wrapped as an ELF, r2 = `0x8038EFA0`, r13 = `0x8038CC00`, names from em-eight's symbol lists.
+Stock Ghidra has no Gekko language, so a scratch copy had its paired-single opcodes rewritten to the scalar op of the
+same length (only 30 such instructions in the region, almost all register saves; the two inlined `Vector3f` adds were
+read from the real disassembly). Ghidra's analysis wrongly marked `EGG::Vector3f::normalise` as non-returning, which
+truncated `0x8056F7F0` to 0x37C bytes; clearing that flag and the call-site flow overrides recovered the full 0x1530.
+
+Conventions below: `self` is the kart whose `KartSub::calcPass1` is running, `other` is the kart found by the box
+search. `status bit N` is Kinoko's `eStatus` numbering: word `N / 32` at `KartState + 0x4 + 4 * (N / 32)`, value bit
+`N % 32`. Constants are the floats in the rodata pool at `0x80891730` unless noted.
+
+## Call graph
+
+```
+KartSub::calcPass1                                   0x80596CFC
+  BoxColUnit::search(self.boxColUnit, 0x1F)          0x80786FA8   (bit 0 = drivers, 3 = objects, 4 = drivables, ...)
+  while (other = BoxColManager::getNextPlayer())     0x80785D8C   (iterator at +0x428, flag bit 0 = driver)
+      self.collide->checkPlayerCollision(other)      0x8056F7F0   <- this document
+  if (status bits 82 | 83) skip object/item collision
+  KartCollide::calcObjectCollision                   0x80571F10   (runs AFTER the kart-kart check)
+  KartCollide::checkItemCollision                    0x8057257C   (out of scope)
+  ...
+  KartCollide::findCollision / calcFloorEffect       0x80572C20 / 0x80571634
+  KartCollide::calcPlayerBumpTimer                   0x805713B8   (decrement, floor at 0)
+  KartCollide::calcFloorMomentRate                   0x805713FC
+
+KartObjectManager::calc                              0x8058FFE8
+  for every kart: state.kartPairMask(+0x84) = 0, collide.tangentOff(+0x30) = 0, collide.movement(+0x3C) = 0
+  for every kart: kart.calc()                        (pass 0 and pass 1, kart 0 first)
+
+checkPlayerCollision                                 0x8056F7F0  (0x1530)
+  checkPlayerHitboxOverlap                           0x8056EEF4  (0x290)   all hitbox pairs, push / contact boxes
+  applyPlayerBump(+1, self -> other)                 0x80570DA8  (0x48C)   speed loss, force, wrench, spin kick
+  applyPlayerBump(-1, other -> self)                 0x80570DA8
+  KartMove::startWheelieBumpWobble (bikes)           0x80579F6C  (0x78)
+  KartMove vtable +0x30  (kart: empty 0x80570D20,    bike: 0x80588FC0 -> cancelWheelie 0x805883C4)
+KartMove::calc                                       0x805788DC
+  KartMove::calcWheelieBumpWobble                    0x80579FE4  (0x158)   after KartJump::calc, before m_bumpTimer--
+```
+
+The six unnamed functions right after `0x8056F7F0` and the one before it were checked against every `b`/`bl` and every
+pointer-sized word in the image: only `0x80570DA8` is called by it. `0x80571234` is called from the slipstream code
+(`0x80586FA8`), `0x80571484` from `activateOob`, `0x80571570` from `0x80571484`; `0x8056F73C`, `0x80570D24` and
+`0x805715F4` have no branch or pointer reference at all. `0x80570D20` (a lone `blr` just before `0x80570D24`) is the
+kart variant of KartMove vtable slot `+0x30`. None of the others is part of kart-kart collision.
+
+## Offsets used
+
+| object | offset | field |
+|---|---|---|
+| KartAccessor | +0x00 KartSettings (player index u8 at +0x10), +0x04 KartState, +0x08 KartBody (+0x90 KartPhysics; physics +0x04 KartDynamics, +0x08 hitbox group, +0xE4 z axis), +0x14 driver model, +0x28 KartMove, +0x2C KartAction, +0x30 KartCollide, +0x38 per-kart stat counters | |
+| KartState | +0x04..+0x14 status words, +0x84 `kartPairMask` u16 (bit i = pair with player i already handled this frame) | |
+| KartCollide | +0x04 proxy, +0x14 `boundingRadius`, +0x18 `playerBumpTimer` s16, +0x1C `floorMomentRate`, +0x30 `tangentOff`, +0x3C `movement` | |
+| KartMove | +0x20 `speed`, +0x38 `smoothedUp`, +0x5C `dir`, +0x10C boost timers, +0x118 boost active mask u16 (type t at bit 2t: 0x1 mini-turbo / start / respawn boost, 0x4 mushroom / boost panel, 0x10 trick / zipper; `& 4` was first misread as trick / zipper, corrected after the `test2` Dolphin recording), +0x23C `wheelieBumpWobbleTimer` s16, +0x23E `wheelieBumpWobblePhase` u16, +0x240 `wheelieBumpWobbleAngle` f32 | |
+| KartDynamics | +0x68 `pos`, +0x74 `extVel`, +0xA4 `angVel0`, +0xE4 `angVel2`, total force via `addForce` 0x805B6388 | |
+| KartAction | +0x30 `hitDepth`; vtable +0x0C = `start` 0x805675DC | |
+| Stats | +0x08 `weightClass` (u32), +0x10 `weight`, +0x14 `bumpDeviationLevel` | |
+| Hitbox (stride 0x30, array at group +0x8C, count u16 at group +0) | +0x04 radius, +0x0C world position | |
+
+## Status bits read or written
+
+| bit | Kinoko name | role here |
+|---|---|---|
+| 18 | TouchingGround | wobble only on the ground |
+| 26 | MushroomBoost | battle-only balloon steal (not ported, battle mode) |
+| 29 | Wheelie | bike in a wheelie gets the wobble |
+| 32 | InAction | no wobble while in an action |
+| 33, 35, 36, 77, 78, 102 | TriggerRespawn, CannonStart, InCannon, InRespawn, AfterRespawn, AfterCannon | collision disabled |
+| 40, 72, 82, 83, 89 | added as `NoKartCollision40` etc. | collision disabled; set by item/cannon/vanish code not in Kinoko |
+| 80 && 81 | Crushed && `CrushAnimation` | collision disabled |
+| 134 | added as `Ghost` | collision disabled (KartState+0x14 bit 6, `isGhost` 0x80590678) |
+| 15 | AirtimeOver20 | bump force halved |
+| 42 | OverZipper | bump force x0.2 |
+| 56 | added as `FloorMomentRateReset` | set on the bumped kart (also set by the game's `startFloorMomentRate` 0x805713D8) |
+| 63, 79, 91 | added as `InStar`, `InMega`, `InBullet` | item outcomes instead of a bump |
+| 64, 65 | added as `SlipstreamCharge`, `SlipstreamBoost` | bump weight raised to the other kart's while boosting (see the slipstream section below) |
+| 66 | added as `WheelieBumpWobble` | wobble active |
+| 91 (other) | InBullet | no bump applied to a kart in a bullet |
+
+## checkPlayerCollision 0x8056F7F0
+
+```c
+// Same predicate, inlined twice (self, then other): kart-kart collision is skipped while any of these holds.
+static bool isPlayerCollisionDisabled(KartObjectProxy *kart) {
+    u32 *s = &kart->state->status;                                    // +0x04 .. +0x14
+    return (s[1] & 0x102) /* 33 TriggerRespawn, 40 */ || (s[2] & 0x020C6000) /* 77, 78, 82, 83, 89 */
+        || kart->isGhost() /* 134 */ || (s[1] & 0x18) /* 35 CannonStart, 36 InCannon */ || (s[2] & 0x100) /* 72 */
+        || ((s[2] & 0x10000) && (s[2] & 0x20000)) /* 80 Crushed && 81 */ || (s[3] & 0x40) /* 102 AfterCannon */;
+}
+
+void KartCollide::checkPlayerCollision(KartObjectProxy *other) {
+    if (isPlayerCollisionDisabled(self)) return;
+    if (isPlayerCollisionDisabled(other)) return;
+
+    u8 otherIdx = other->playerIdx(), selfIdx = self->playerIdx();
+    if (self->state->kartPairMask & (1 << otherIdx)) return;          // +0x84: pair already done this frame
+    if (selfIdx == otherIdx) return;
+    self->state->kartPairMask  |= 1 << otherIdx;                      // both sides marked: one pass per pair
+    other->state->kartPairMask |= 1 << selfIdx;
+
+    BoundBox3f pushBox = {0, 0};                                      // sp+0xA8: min/max of (dir to other * depth)
+    BoundBox3f contactBox = {0, 0};                                   // sp+0x90: min/max of contact points
+    Vector3f pushDir = Vector3f::zero;                                // sp+0x80, copied from the zero vector 0x802A4148
+    if (!checkPlayerHitboxOverlap(&pushBox, &contactBox, other)) return;
+
+    pushDir = pushBox.min + pushBox.max;                              // paired-single add (x,y), then z
+    f32 depth = pushDir.normalise();                                  // f31
+
+    Vector3f offset = pushDir * (-0.5f * depth);                      // 0x80891748 = -0.5; factor rounded first
+    self->collide->tangentOff += offset;  self->collide->movement += offset;     // +0x30, +0x3C
+    other->collide->tangentOff += -offset; other->collide->movement += -offset;
+
+    // Visual only: spark effect at contactBox.min + contactBox.max + pushDir * (0.5 * -depth) (0x806A6428 on the
+    // effect manager 0x809C21D0 +0x68 [selfIdx]), driver/kart model shakes (0x807D396C), sounds (0x807091AC).
+
+    bool sameTeam = false;                                            // RaceConfig(0x809BD728)+0xB90 bit 1 = teams:
+    if (raceConfig.modeFlags & 2) {                                   // players[i].team at +0xF4 + 0xF0 * i, 2 = none
+        s32 ts = team(selfIdx), to = team(otherIdx);
+        sameTeam = ts != 2 && to != 2 && ts == to;
+    }
+    bool battle = gameMode in {3, 9, 10};                             // +0xB70; used for battle scoring only
+
+    bool selfStar = bit 63, otherStar, selfMega = bit 79, otherMega, selfCrushed = bit 80, otherCrushed,
+         selfBullet = bit 91, otherBullet;
+    bool doBump = false;
+    if (sameTeam) {
+        doBump = true;
+    } else if (selfBullet != otherBullet) {
+        if (otherBullet && !selfBullet && !selfStar) {
+            self->action->hitDepth = -pushDir;                        // 0x80590D38: KartAction+0x30
+            if (self->action->start(6, 1, 1, 0, otherIdx, 0)) { /* sound 0x110, stat counters 0x805918E0/BC */ }
+        } else if (selfBullet && !otherBullet && !otherStar) {
+            other->action->hitDepth = pushDir;
+            if (other->action->start(6, ...)) { ... }
+        } else doBump = true;
+    } else if (selfStar != otherStar) {
+        if (otherStar && !selfBullet && !selfStar) {
+            self->action->hitDepth = -pushDir;
+            if (self->action->start(3, 1, 1, 0, otherIdx, 0)) { /* driver anim 5 + rumble on other, battle score */ }
+        } else if (selfStar && !otherBullet && !otherStar) {
+            other->action->hitDepth = pushDir;
+            if (other->action->start(3, ...)) { ... }
+        } else doBump = true;
+    } else if ((selfMega && !otherMega && !otherCrushed) || (otherMega && !selfMega && !selfCrushed)) {
+        if (otherMega && !selfMega)      self->action->start(13, 1, 0, 0, otherIdx, 0);   // no hitDepth here
+        else if (selfMega && !otherMega) other->action->start(13, ...);
+        else doBump = true;
+    } else {
+        doBump = true;
+    }
+    if (!doBump) return;
+
+    // Each kart's lateral axis: pose column 0 (Kinoko bodyForward) made perpendicular to KartMove::dir (+0x5C).
+    Vector3f otherSide = other->bodyForward().perpInPlane(other->move->dir, true);
+    Vector3f otherHitDir = pushDir.proj(otherSide);  otherHitDir.normalise();          // projUnit 0x805AEB88
+    Vector3f selfSide = self->bodyForward().perpInPlane(self->move->dir, true);
+    Vector3f selfHitDir = otherHitDir.proj(selfSide); selfHitDir.normalise();          // projects otherHitDir!
+
+    if (!(other status bit 91 InBullet)) applyPlayerBump(+1.0f, self, other, otherHitDir, pushDir);
+    if (!(self status bit 91 InBullet))  applyPlayerBump(-1.0f, other, self, selfHitDir, pushDir);
+
+    // Kart model hit reaction (visual) for both karts.
+    if (self->isBike() && self status bit 29 Wheelie)   self->move->startWheelieBumpWobble(otherIdx);
+    if (other->isBike() && other status bit 29 Wheelie) other->move->startWheelieBumpWobble(selfIdx);
+
+    // Battle only (bVar4 && !sameTeam): a kart in a mushroom boost (bit 26) that hits one that is not protected
+    // (bits 33, 40, 77, 78, 82, 83, 89, 4, 135, 32, 35, 36, 63, 79, 91) steals a balloon (0x805819A8 on the
+    // victim's KartMove) and scores. No effect outside battle.
+
+    self->move->vtable[0x30]();    // kart: empty; bike: cancelWheelie()
+    other->move->vtable[0x30]();
+    // collision sound between the two karts (0x807091AC)
+}
+```
+
+## checkPlayerHitboxOverlap 0x8056EEF4
+
+```c
+bool KartCollide::checkPlayerHitboxOverlap(BoundBox3f *pushBox, BoundBox3f *contactBox, KartObjectProxy *other) {
+    bool found = false;
+    CollisionGroup *mine = self->hitboxGroup(), *theirs = other->hitboxGroup();
+    for (u16 i = 0; i < mine->count; ++i) {
+        Hitbox &a = mine->hitbox(i);
+        for (u16 j = 0; j < theirs->count; ++j) {
+            Hitbox &b = theirs->hitbox(j);
+            Vector3f delta = b.worldPos - a.worldPos;                  // VEC3_sub(out, b, a): points from self to other
+            f32 radiusSum = a.radius + b.radius;
+            f32 distSq = delta.z * delta.z + (delta.x * delta.x + delta.y * delta.y);   // exact add order
+            f32 radiusSumSq = radiusSum * radiusSum;
+            bool hit = false;
+            f32 depth;
+            if (radiusSumSq - distSq > 0.0f) {                         // rounded to single, then compared
+                f32 dist = distSq > 0.0f ? distSq * FrSqrt(distSq) : 0.0f;          // EGG::Mathf::sqrt, inlined
+                f32 radiusLen = radiusSumSq > 0.0f ? radiusSumSq * FrSqrt(radiusSumSq) : 0.0f;
+                depth = radiusLen - dist;
+                delta.normalise();
+                hit = true;
+            }
+            if (hit) {
+                Vector3f contact = a.worldPos + delta * a.radius;       // Vec3_scale, Vec3_add
+                contactBox->min = min(contactBox->min, contact);        // VEC3Minimize / VEC3Maximize
+                contactBox->max = max(contactBox->max, contact);
+                delta *= depth;
+                pushBox->min = min(pushBox->min, delta);
+                pushBox->max = max(pushBox->max, delta);
+                found = true;
+            }
+        }
+    }
+    return found;
+}
+```
+
+Both boxes start at zero, not at +/-FLT_MAX, so `min` never exceeds 0 and `max` never drops below 0 per component;
+the push direction is the sum of the most negative and most positive component over all overlapping pairs.
+
+## applyPlayerBump 0x80570DA8
+
+`owner` is always `self` (the kart running calcPass1): its weight class and bump deviation level are used for BOTH
+calls, whichever kart is the target.
+
+```c
+void KartCollide::applyPlayerBump(f32 sign, KartObjectProxy *source, KartObjectProxy *target,
+        const Vector3f &hitDir, const Vector3f &pushDir) {
+    if (target->collide->playerBumpTimer > 0) return;                 // +0x18
+    // item notify 0x8079A578(ItemDirector 0x809C3618, sourceIdx, targetIdx): trailing items, out of scope
+
+    f32 wSource = source->stats.weight, wTarget = target->stats.weight;               // Stats+0x10
+    if (source status bit 65 SlipstreamBoost && wSource < wTarget) wSource = wTarget;
+    if (target status bit 65 SlipstreamBoost && wTarget < wSource) wTarget = wSource;
+    if (source->move->boostActive(MushroomAndBoostPanel)) wSource *= 1.5f;             // +0x118 & 4
+    if (target->move->boostActive(MushroomAndBoostPanel)) wSource *= 0.5f;             // sic: wSource again
+    f32 weightRatio = wSource / wTarget;
+
+    Vector3f dir = hitDir.perpInPlane(target->move->smoothedUp, true);                 // +0x38
+    f32 strength = weightRatio * (3.0f + 0.11f * fabs(source->move->speed));           // +0x20
+    if (!(100.0f >= strength)) strength = 100.0f;                                      // fcmpo 100, strength; bge
+
+    f32 classFactor = 0.3f * (1.0f + (f32)owner->stats.weightClass);                    // u32 -> float, Stats+0x08
+    f32 offsetScale = classFactor * (-sign * target->collide->boundingRadius);          // +0x14
+    Vector3f point = target->pos + pushDir * offsetScale;
+
+    f32 force = sign * strength;
+    if (target status bit 42 OverZipper)          force *= 0.2f;
+    else if (target status bit 15 AirtimeOver20)  force *= 0.5f;
+    Vector3f push = (dir * force).rej(target->move->smoothedUp);                       // rejUnit 0x805AEBD0
+    target->dynamics->addForce(push);                                                   // totalForce +=
+    target->dynamics->applyWrenchScaled(point, push, owner->stats.bumpDeviationLevel);  // Stats+0x14
+
+    f32 speed = target->move->speed, absSpeed = fabs(speed);
+    f32 slowed = absSpeed - 0.5f * strength, floor = 0.5f * absSpeed;
+    if (floor > slowed) slowed = floor;
+    target->move->speed = slowed * (speed < 0.0f ? -1.0f : 1.0f);
+
+    target->collide->playerBumpTimer = 10;
+    target->collide->floorMomentRate = 0.01f;                          // +0x1C, 0x80891764
+    target status bit 56 FloorMomentRateReset = 1;
+
+    Vector3f axis = dir.cross(owner->componentZAxis());               // VEC3_fromCross(out, dir, ownerZ)
+    f32 spinSign = axis.y < 0.0f ? 1.0f : -1.0f;
+    target->dynamics->angVel0 += Vector3f(0.0f, 0.0f, spinSign * (0.05f * strength));  // +0xA4 (x, y += 0.0f)
+
+    // CPU AI notify (Enemy::AI::handleBump 0x807263CC), driver model reaction (0x80865534, uses force),
+    // controller rumble min(0.05 * strength, 1) (0x8059041C): no effect on the kart's physics.
+}
+```
+
+## Bike wheelie wobble
+
+```c
+// 0x80579F6C, called on the bike that was in a wheelie (otherIdx = the kart it hit)
+void KartMove::startWheelieBumpWobble(u8 otherIdx) {
+    status bit 66 WheelieBumpWobble = 1;
+    wheelieBumpWobbleTimer = 0;                                       // +0x23C
+    wheelieBumpWobbleAngle = 0.0f;                                    // +0x240 (phase +0x23E is NOT reset)
+    // KartItem(ItemDirector+0x14 [idx * 0x248]) 0x80798B28(item, 1, otherIdx): item side, out of scope
+}
+
+// 0x80579FE4, every frame from KartMove::calc right after KartJump::calc
+void KartMove::calcWheelieBumpWobble() {
+    if (!(status bit 66)) return;
+    if (++wheelieBumpWobbleTimer > 25) { status bit 66 = 0; return; }   // s16 at 0x808B5BA4
+    if (!(status bit 18 TouchingGround) || (status bit 32 InAction)) return;
+    f32 speedFactor = speedRatioCapped / 0.4f;  if (!(1.0f >= speedFactor)) speedFactor = 1.0f;
+    wheelieBumpWobblePhase += 5000;                                   // u16 wraps (0x808B5B9C)
+    f32 wobble = speedFactor * (0.1f * SinFIdx((f32)wheelieBumpWobblePhase * (1.0f / 256.0f)));   // psq_l GQR3 = u16
+    wheelieBumpWobbleAngle = wobble;
+    dynamics->angVel2 += Vector3f(0.0f, wobble, 0.0f);                // +0xE4
+}
+```
+
+Found with the `test2` Dolphin recording (`DOLPHIN_VERIFY_RESULT.md`): the wobble bit (66) is also read in two places
+outside these functions.
+
+```c
+// KartMoveBike::calcWheelie 0x805883F4, not in a wheelie:
+if (status bit 66 WheelieBumpWobble) wheelieRot -= 0.002f;          // 0x808B5AC4, instead of the rotDec ramp
+else if (wheelieRot > 0.0f) { rotDec = max(rotDec - 0.001f, -0.03f); wheelieRot += rotDec; }
+
+// KartMove::calcAcceleration 0x8057B9BC, right after speedLimit *= calcWallCollisionSpeedFactor():
+if (status bit 66 WheelieBumpWobble) speedLimit *= 0.4f;            // 0x8057BF08, 0x808B5B98
+if (status bit 131) speedLimit = min(speedLimit, (0x8059144C())->+0x84);   // not ported, bit unknown in Kinoko
+```
+
+## Order of the karts' passes (`KartObjectManager::calc` 0x8058FFE8)
+
+Three loops: reset every kart's pair mask, tangentOff and movement; `calcSub` (pass 0, 0x8058EEB4) for every kart;
+`calc` (pass 1, 0x8058EEBC) for every kart. A push that kart A's pass 1 gives kart B reaches B's dynamics on the next
+frame. (Kinoko ran both passes per kart in one loop until the `test1` recording showed the difference.)
+
+## Not ported (no effect on kart physics, or needs systems Kinoko does not have)
+
+- Effects, model shakes, driver animations, sounds, rumble, per-kart stat counters (accessor +0x38), CPU AI notify.
+- Item hooks: `0x8079A578` (trailing items of the target) and `0x80798B28` (bike wobble). Items are not in Kinoko yet.
+- Battle mode: balloon steal and score callbacks (game modes 3, 9, 10). Kinoko has no battle mode.
+- Teams: RaceConfig team flag. Kinoko's RaceConfig has no teams, so `sameTeam` is always false.
+- The star / mega / bullet branches are ported but cannot fire yet: nothing in Kinoko sets bits 63, 79 or 91, and
+  Kinoko's `KartAction` handlers for actions 6 and 13 are stubs (`startStub`).
+- Slipstream was missing at first; it is now ported too (section below).
+
+# Other VS / multiplayer behaviour (second pass)
+
+How these were found: every kart-code function that reads another racer (`KartObjectManager` lookups,
+`PlayerHolder_getPlayer`), the game mode / engine class / course fields of RaceConfig (`+0xB68` course,
+`+0xB6C` engine class, `+0xB70` game mode, `+0xB74`, `+0xB78`, `+0xB90` flags), and every test of the slipstream
+status bits. Battle (modes 3, 9, 10), mission (mode 4), awards/live-view (modes 0xB, 0xC), rumble, camera, sound and
+UI readers were set aside. What is left and affects kart physics in a VS race:
+
+## Slipstream (`KartMove::calcSlipstream` 0x80586FA8)
+
+Called from `KartMove::calc` as `InCannon ? calcCannon() : calcSlipstream()`. State: `KartMove+0xEC` timer (u32),
+`+0xF0` factor (1.0; +0.005 per charging frame up to 1.1; 1.4 while boosting; nothing physical reads it, kept for
+fidelity), status bit 64 charging, bit 65 boosting. Constants at `0x808B5B70..`.
+
+```c
+// RaceManager +0x34 = slot mask of 12 slots (0xFFF00000, set by 0x805506EC with 12, NOT the player count),
+// +0x38 = current slot (0x80000000 at race init). Every frame from the countdown on (0x8055070C):
+//     turn = (turn >> 1) & slots;  if (turn == 0) turn = 0x80000000;
+void KartMove::calcSlipstream() {
+    if (selfIdx == cntlzw(raceManager.turn) && !ghost && !(KartObjectManager.flags & 2)
+            && !(status bit 91 InBullet || bit 65)) {
+        bool found = false;
+        if (!InAction && speedRatioCapped >= 0.5f) {
+            for (each other racer j != self, not a ghost, speedRatioCapped >= 0.5f) {
+                Vector3f behind = other.pos + other.move.dir * -1000.0f;
+                if ((boundingRadius + 1000)^2 - |pos - behind|^2 <= 0) continue;    // 0x80571234
+                Vector3f toOther = other.pos - pos;
+                f32 cone = other.isBike ? 0.99f : 0.982f;
+                if (other.move.dir . toOther > sqrt(|toOther|^2) * cone) { found = true; break; }
+            }
+        }
+        if (found) bit 64 = 1; else { timer = 0; bit 64 = 0; factor = 1.0f; }
+        return;
+    }
+    if (bit 64) {
+        factor = min(factor + 0.005f, 1.1f);
+        if (++timer >= 90 && !(bits 72, 82, 83, 91, 4 BeforeRespawn, 135, 32 InAction)) {
+            bit 64 = 0; bit 65 = 1; timer = 0; factor = 1.4f;
+        }
+        return;
+    }
+    if ((bit 65 && ++timer > 135) || speedRatioCapped < 0.5f || InAction) { timer = 0; factor = 1.0f; bit 65 = 0; }
+}
+```
+
+So a racer only searches on its own slot, once every 12 frames; between searches a found draft keeps charging.
+
+Effects of the boost (bit 65):
+- `KartMove::calcVehicleSpeed` 0x8057AB68, accelerating, not on moving water: acceleration = 0.7 (after a star /
+  mega / thunder cloud's 3.0, before the half pipe's 5.0).
+- `KartMove::calcAcceleration` 0x8057B9BC: the boost speed limit is raised to at least 115 (star 105, mega and thunder
+  cloud 95 come first in the same max chain).
+- Kart-kart bump: slipstreaming raises a kart's bump weight to the other kart's (`0x80570DA8`, already ported).
+
+Reset (`0x80582488`, inlined in `clear`, `initOob`, `enterCannon` between the SSMT and offroad-invincibility resets):
+timer 0, factor 1.0, bits 64 and 65 cleared.
+
+## Engine class (`RaceConfig+0xB6C`)
+
+`KartMove` constructor: `KartMove+0x10 = {0.8, 0.9, 1.0, 0.7}[engineClass]` (50cc, 100cc, 150cc, battle).
+Used for: `baseSpeed = factor * stats.speed` (also the initial soft speed limits, `init` 0x805784D4); the boost speed
+limit term in `calcAcceleration` (`boostLimit * scale * factor * kclSpeedFactor`); the jump pad check
+`softSpeedLimit > 110 * factor` (`tryStartJumpPad` 0x8057FD18); and a bullet-bill speed not in Kinoko.
+Course objects: `ObjPillar` / its collidable (0x807FED80, 0x807FEB68) take the fall start from setting 0 / 2 / 3 at
+150cc / 100cc / 50cc; `ObjVolcanoPiece` (0x80817DE8) takes rest/shake times from settings (1,2) / (3,4) / (5,6),
+always (1,2) on Block Plaza. A third object constructor (`0x806E3A8C`, same pattern) is not in Kinoko. The other
+readers are sound (`0x806FAE60`), UI (`0x807F8994`), items, CPU AI and GP scoring.
+
+## Start grid (`RaceManager::findKartStartPoint` 0x805362DC)
+
+VS and GP use `RaceManager::Player+0x20` as the 1-based grid place and the player count; time trials and ghost
+races use place 1 of 1. `+0x20` is set in the RaceManager constructor from the race config player's byte at
+`+0x109` (written by the menus); battle uses index + 1. Kinoko now takes it from `RaceConfig::Player::startPlacement`
+(0 = index + 1, the old behaviour).
+
+## Checked and not needed for VS kart physics
+
+- `KartObjectManager+0x28` flags: set only for course ids 0x12, 0x14, 0x23, game modes 0xB/0xC and missions.
+- Teams (`+0xB90` bit 2) mark karts in team VS; Kinoko has no teams.
+- Lakitu units (`JugemDirector`, one per local player in the game, one in Kinoko) and the camera only affect
+  visuals: Kinoko's respawn physics reads the per-player respawn point from RaceManager.
+- Not ported, separate systems: items (and everything item-triggered: star, mega, bullet, thunder cloud, ink,
+  shock), mirror mode (mirrored course collision), battle, CPU racers' AI, online packet code.
+
+# Item effects on karts (third pass)
+
+Offsets in KartMove: `+0x10C..` boost timers, `+0x148` offroad invincibility, `+0x178` shock speed multiplier,
+`+0x17C` mega scale, `+0x18A` star timer, `+0x18C` shock timer, `+0x18E` ink timer, `+0x190` ink pending (byte),
+`+0x192` crush timer, `+0x194` mega timer, `+0x196` mega shrink started (byte), `+0x260` KartScale.
+KartScale types: 0 `thunder_scale_up`, 1 `thunder_scale_down`, 2 `kinoko_scale_up`, 3 `kinoko_scale_down`.
+
+```c
+// KartMove::calc 0x805788DC, item part, in this order after the boosts:
+//   mega (as 0x80580DC0), star timer (as 0x805803F0), shock (0x80580998), crush (0x80580F9C), ..., scale (0x8058160C),
+//   ..., calcVehicleSpeed (vtable +0x44), ink (0x80581B1C), calcAcceleration (0x8057B9BC)
+// calcScale: totalScale(+0x170) = s160 * s180 * shockMultiplier * megaScale (s160, s180 are 1 in a race)
+// KartAction::start 0x805675DC(action, r5, hitsMega r6, out r7, item arg r8, r9) refuses when any of
+//   bits 33, 40, 77, 78, 82, 83, 89 | BeforeRespawn 4 | 72 | (battle && stage >= 4) | InStar 63 | InCannon 36 |
+//   InBullet 91, or InMega 79 when !hitsMega.
+// Action table (start, calc, end): 6 = (0x80569024, 0x80568D34, 0x80568F68), 10 = 17 = (0x8056804C startRotation(2),
+//   0x80568204, 0x8056837C), 13 = (0x80569818, 0x80569A1C, 0x80569AD0).
+// Item use: KartItem +0xB4 use object 0x80791910 looks the held id up in the boot-time behaviour table (0x809C36A0,
+//   stride 0x1C: +0x8 count, +0x10 timed, +0x14 object kind (0 = no object), +0x18 use function) and calls it.
+// Lightning: 0x807B7C20 calls 0x80798728 on every other KartItem (team mates spared): not in a respawn/cannon state ->
+//   KartMove::applyLightning 0x80580438 -> applyLightningEffect(table[rank + 11 - players] + 72, 0, 0).
+// Rank: 0x805336D8, insertion sort by race completion from the previous order; finished = 0.01 * idx + 6000099 - ms.
+```
+
+# Item objects (fourth pass)
+
+Green shell, banana, holding items behind the kart, throwing, hits and drops. Addresses PAL. Decompiled with a second
+paired-single rewrite (`ps_merge*` -> `fmr`, `ps_sum*` / `ps_muls*` / `ps_madds*` -> scalar ops) on top of the first
+one; "double" values in that pseudo-C are float pairs.
+
+```c
+// ItemDirector (0x809C3618): +0x14 KartItem[players] (0x248 each), +0x48 ItemObjHolder[15] (0x24 each), +0x42C total over 30.
+// ItemDirector::calc 0x80799850: holders with active objects -> ItemObjHolder::calc 0x80796470 (offline: obj->calc for each
+//   active, i.e. the course objects move BEFORE the karts' item buttons), total = sum(weight * (spawned + held)) - 30,
+//   then KartItem::calc 0x80797928 for every player. Karts collide with items in KartSub::calcPass1, before all this.
+// Object kinds (holder index): 0 green, 1 red, 2 banana, 3 mushroom, 4 star, 5 blue, 6 lightning, 7 fake item box, 8 mega,
+//   9 bob-omb, 10 blooper, 11 POW, 12 golden, 13 bullet, 14 thunder cloud. Properties 0x809C2F48 (stride 0x74):
+//   +0x04 limit, +0x08 pool, +0x14..+0x16 keep-own-state bytes, +0x18 initial state ptmf, +0x2C no box col,
+//   +0x38 KCL radius, +0x3C held hit radius, +0x40 hit radius, +0x44 held scale, +0x48 scale, +0x4C/+0x50 growth,
+//   +0x54 landing bounce, +0x58 survives hits, +0x59 breaks on kart hit, +0x5A reacts to kart hit, +0x5C weight.
+// Item behaviour 0x809C36A0 (stride 0x1C): +0x04 object kind, +0x08 count, +0x10 timed, +0x14 use mode
+//   (0 instant, 1 one held object, 2 triple chain (bananas), 3 triple orbit (shells)), +0x18 use function.
+// Holder pool order: [0, landed) resting, [landed, active) on the course, [active, spawned) taken out (held), rest free.
+//   spawn 0x80795E04 (evicts the oldest on the course when full), activate 0x807961F0 (into the active part, box col
+//   unit with hit radius * scale, frame = 0), despawn 0x80795F68 (compacts, removes the unit).
+
+KartItem::calc 0x80797928, flags +0x0C: 0x1000 held, 0x2000 pressed, 0x4000 released this frame, 0x400 lockout,
+  0x200 unlocked this frame, 0x10 / 0x20 stick up / down (on at |y| > 0.6, off at |y| < 0.1), 0x40 press accepted,
+  0x80 release accepted, 0x100 release armed (set by the held item every frame), 0x1/0x2/0x4 roulette / inventory /
+  held when accepted (0x80798584: race stage, not in an action, not bit 50).
+  Use when (flags & 0x242) == 0x242: ItemTrail::use 0x80791910 (KartItem +0xB4). Throw when (flags & 0x284) == 0x284,
+  checked by the held item's calc (0x80792C68), i.e. one frame after the release arms.
+  Also: +0x34 position delta, +0x40 throw pitch (0.05 towards 0.9 * lerp(zAxis.y, delta dir y, speed ratio)),
+  +0x23C stick x smoothed by 1/15 per frame (aim of a forward throw).
+ItemTrail (KartItem +0xB4): mode 1 init 0x80792B08 / calc 0x80792C68; position 0x80792618 (lags the kart's turns,
+  0.1..0.27 follow rates, 40 + 0.9 * stats+0x170 behind, stats+0x178 up, KCL push-out blended 0.2); kart pose cache
+  0x80791E5C; collisions 0x80791CC8 (box col unit once the scale reaches 0.8, radius = kart scale * held hit radius);
+  drop countdown +0x54 = 10, one held item at 8, 4, 0 (0x8079231C) with 0x807A6F74 (up 25/35 + kart up speed);
+  0x80798B28 starts it from the spin (0x80567D3C), action 2 (0x8056865C), action 5 (0x80568FA4, all modes) and the
+  bike wheelie bump (0x80579F6C).
+Throw direction: forward 0x80794E88 (speed + |delta|, forward * dirScale + delta, aim 20 * -speed ratio * stick x),
+  backward 0x80795030 (speed - min(|delta|, base speed), -(forward * dirScale + delta.xz)), then 0x80794D1C (project on
+  the floor on sticky roads, else keep KartItem +0x40 as the y and rescale x/z).
+ItemObj::calc 0x8079EFEC: scale growth (+0x4C after a forward throw, else +0x50; dropped items 0.1 with a landing
+  spring), released blend 0x807A25B0 for 44 frames (frames 0-1 follow the kart / hand, the state runs from frame 2),
+  else the state ptmf (+0x168); vanish when off the floor too long (+0x15E 60/180), on fall boundaries, below y 0;
+  owner immunity cleared after 30 frames (15 grounded with 0x40000, 7 with 0x80000).
+Green shell: release 0x807AEB98 (forward 85 / 9 bounces unless stick down: backward / 4 bounces) -> 0x807B5178;
+  state 0x807AEC64: 1500 frames, last bounce after 900, move 0x807B54F4 towards speed 105 (+0.01 per frame):
+  KCL push (0x6CEBDFFF), floor following, 30 frames of flight off steep floors, wall reflection (y damped 0.7),
+  bounce budget, gravity 2 (falling) / 4.2 (rising), floor pull 2.5.
+Banana: release 0x807A3BE0 (dropped behind unless stick up) -> arc 0x807B7104 (random +-0.03 spread below speed 30),
+  state 0x807A3E78 -> 0x807B7570 (gravity 1.8 / drag 0.97 dropped, 2.2 / 0.999 thrown), land 0x807B6910,
+  break 0x807A40F4 (pop up to 30) -> shrink 0x807A3C80, 20 frames.
+Kart hits: KartCollide::calcItemCollision 0x8057257C <- ItemDirector 0x80799CAC <- ItemObj 0x807A14D4 (bounding
+  sphere, then the item as a point of radius r against the kart's convex hull, collider 0x808D198C); handlers
+  0x808B5468: shells action 2, banana action 0 (none in a mega), FIB 2, blue / bob-omb 7 while exploding; KartAction
+  start(action, 0, 0, 0, 12, 1). The item is knocked away (0x807A6738) and breaks (0x807A6560, 20 frames).
+Inventory drop (hit by lightning, actions 3 / 4 / 6 / large flip / crush): 0x80798A30 -> 0x807BC610: 10-frame
+  countdown, objects spawned at once with a random-angle spread (0x807BC350: 15 or 20 out, scale 0.05), one released
+  at 7, 5, 3 (0x807BC170, + 0.7 * kart velocity).
+```
+
+## Item boxes and the roulette (fifth pass)
+
+Random generators. `RaceManager` +0x04 and +0x08 are two `Util::Random`, seeded from the scenario's seed1 / seed2
+(`RaceConfig` +0xB94 / +0xB98) in the constructor 0x805327A0. `RaceConfig::Scenario::initRng` 0x8052F924 (called at
+the end of `Scenario::initRace` 0x8052FB90): game modes 2, 4, 5 seed1 = 0x74A1B095, seed2 = clock; tournament (mode
+flag 4) seed1 = 0x92BC7D03; replays and online keep the seeds they were given (online: from the network); every other
+offline mode takes both from `OSGetTick`. +0x04 is advanced once per frame at the end of `calcEnginesUnpaused`
+0x80554AD4 and used by course objects. The item code picks one with 0x807BD718: +0x08 online or in a Time Trial,
++0x04 otherwise (offline GP / VS). The item box constructor draws `nextU32(180)` from +0x08 (model spin phase), which
+is why the boxes are harmless to Time Trial ghosts.
+
+Race flags 0x809C38B8 (`RaceGlobals_init` 0x807BD1D0, run from the player model manager's constructor 0x8078CA5C):
++0 player count, +1 online (modes 7..10), +2 offline VS (mode 1), +3 battle (3, 9, 10), +4 Time Trial (2, 5, 6, and
+anything > 12), +5 teams (mode flag 2), +0x18 a per-course item scale, +0x1C course 0x1D flag.
+
+Item box `ObjItemBox` (`itembox`, ctor 0x808285B0, vtable 0x808D7BC0, 200 bytes): +0xB0 active, +0xB4 timer, +0xB8
+respawn frames (setting 5: 4/5 -> 600, 6 -> 900, else 150), +0xBC spin phase, +0xBE setting 3. Scale 0.9, position
++(0, 180 + setting 6, 0). calc 0x80828860: broken -> hidden and intangible (vtable +0x90, BoxColUnit flag 0x200) until
+the timer passes the respawn time, then active; active -> intangible while the timer < 10 (0x808D79D4), else tangible
+(+0x94). The rest of calc (grow-back scale 1.2, height 45, frames 12 / 6) only moves the model. onCollision (vtable
++0xC0) 0x80828CB8: kart -> rumble, `KartItem::startRoulette` 0x80798C38 (settings 1 / 2, short when setting 5 is 2..4),
+sounds, records the box position for the CPU (0x809C21D0 +0x68[player] +0xAD / +0x100); no kart -> break effect.
+Both: timer 0, inactive, intangible. Derived boxes: `f_itembox` 0x80828F44, `s_itembox` 0x80829208 (falls with
+`checkSphereFullPush`), carried ones 0x8082876C (Hwanwan) and the heyho group 0x8082963C.
+
+`KartItem::startRoulette` 0x80798C38: only with an empty inventory, not remote (+0x1A), not finished (RaceManager
+player +0x38 bit 1); humans (+0x19, `PlayerModel_isHuman` 0x807BD5BC: not type 1/4/5) use setting 1, CPUs setting 2;
+rank from 0x807BD374 (RaceManager player +0x20 outside battles).
+
+Roulette (KartItem +0x54, 0x34 bytes): +0 KartItem, +4 state, +8 frame, +0xC duration, +0x10 speed, +0x14 progress,
++0x18 previous shown, +0x1C shown, +0x20 decided, +0x24 pending (an item held behind the kart with the forced-release
+flag), +0x28 box setting u16, +0x2A rank, +0x2B setting was 0xFF, +0x2C short, +0x2D waiting for the network, +0x2E
+replaced, +0x30 online roll count. start 0x807B9FB0: refused in a Time Trial (flag +4), unless idle, or with a pending
+item; 184 frames at speed 1.1 (45 / 0.17 short); `decideItem`; offline, an item whose kind has no room (0x80799BE8:
+holder +0x0C - in use < count) becomes a mushroom (a triple mushroom stays) with +0x2E set; first shown item drawn.
+calc 0x807BA37C: frame++; while something is shown speed = speed * 0.9675 + 0.002 (fmuls, fadds), progress += speed;
+spinning: progress >= 1 -> -1, next shown (0x807BB8D0); stays spinning while frame <= duration unless KartItem flags
+0x241 (pressed while spinning, press accepted, unlocked) after frame 59 and not short; stopping: progress >= 1 ->
+shows the decided item, and the time after that ends (returns 1). `KartItem::calc` then resets it (0x807BA2D8) and
+either spawns a thunder cloud (0x8079A298) or calls `ItemInventory::setItem(id, +0x2E)` 0x807BC940. Hits (0x80798A30)
+and `KartItem::clear` 0x80798848 cancel a spinning roulette (0x807BA5D8).
+
+`ItemSlotData` 0x809C3670 (0x48 bytes, created in the ItemDirector constructor 0x807BA77C, loaded 0x807BAF48): +0x10
+player table, +0x18 CPU table, +0x20 special table ({row count, u16 rows * 19}), +0x28 shown-item list, +0x2C per-rank
+lists (12 * 0x50), +0x30 per-special-row lists, +0x34 lightning / +0x38 blue shell / +0x3C blooper / +0x40 POW
+cooldowns, +0x44 player count. File: course `ItemSlotTable/ItemSlotTable.slt`, else Common `ItemSlot.bin`; a section
+count, then sections {rank count, item count, bytes item-major}. Grand Prix (and Time Trial): sections 0, 1, 5; offline
+VS: 2, 3, 5, then both tables remapped by player count (0x807BAD20, row map 0x808A6320 + count * 0x18, rows past the
+count cleared); online VS: 4 player, 3 CPU, 5; battle 0x807BBB00. Parse 0x807BA9D8: chance = (s32)(factor *
+(f32)(byte + offset)) per item category (behaviour +0x0C): frantic {0.25, 1, 4} / {3, 0, 0}, strategic {8, 0.25, 0} /
+{0, 3, 0}, online battle of 5..8 {0.5, 1, 2} / {1, 0, 0}.
+
+`decideItem` 0x807BB42C: row = rank - 1 of the player or CPU table, or setting - 1 of the special table; with a triple
+item held (0x80798DBC) or the total item count over 30 (ItemDirector +0x42C), only items 0..15 (not in missions). An
+item counts when its kind's cooldown is 0, not mega / thunder cloud in a mega, not thunder cloud in a star, usable, its
+holder has room (+0x1C limit - spawned - held > 0), and not a bullet while anyone is in a bullet. Cumulative u16 sums at
+0x809C3674; draw `nextU32(sum)`, first item whose sum is above it; nothing -> mushroom. Shown items 0x807BB8D0: a random
+entry of the list, the next one when it equals the current. Cooldowns 0x807BB9EC (ItemDirector calc, first): set full
+(1800, 1800, 900, 1200) when the countdown timer is 0, then decremented; reset by the lightning (0x807B7B7C), blue
+shell (0x807BB9C8), blooper and POW uses.
+
+Item route: ITPH (`parseItemPaths` 0x80513BFC) and ITPT (0x80513ADC) at CourseMap +0x14 / +0x18. Point links
+0x80517E88 (prev at +4, next at +0xA, counts +0x10 / +0x11). Per kart (KartItem +0x44: point, moved, position): init
+0x807B99D4 (point 0 when there are item paths), every frame at the end of `KartItem::calc` 0x807B8A9C (nearest of the
+points up to two links away), and when 12000 or more away 0x807B8F30 (walk forward). Also reset at respawn
+(0x80584334) and by area type 4 (0x80798D0C): not ported.
+
+## Item objects, part 2 (sixth pass)
+
+Red shell (vtable 0x808D2228): states at 0x808D2148, run by `calcRed` 0x807AA87C. Release 0x807AA688: stick down
+-> backward slide, 0 bounces; with an item point -> `initRoute` 0x807B4878 (speed 75, 45 frames of direct steering,
+the racer ahead as target); otherwise a forward slide that looks for a target. Route following is shell-base code
+(the fields at +0x1DC..+0x27C belong to every shell): direct 0x807B4AE4, spline 0x807B4944 / 0x807B4D2C (Bezier
+0x807B7D9C..0x807B8600), next point 0x807B91E4. Target search 0x807B3BAC / 0x807B381C (4000, about 18 degrees,
+height -1500..1000), homing 0x807B2F54 (50, 0.2), lost 0x807B3EC0.
+
+`initRoute` 0x807B4878 is called as (speed, obj, trail, frames, ?, ?, wallBreaks, target, branchSearch): the red shell
+passes (75, 45, 1, 0, 1, target, 0), the blue shell (frames 20, ..., 0, target, 1). wallBreaks 0 gives
+`initThrow` -1 bounces (no bounce limit). branchSearch makes 0x807B91E4 follow the target's own item point (KartItem
++0x44) forward for a third of the course's point count to pick the branch it is on; not ported yet (only the blue
+shell uses it).
+
+Triple items: `ItemTrail` use mode 2 (chain) init 0x807931DC / calc 0x8079356C / detach 0x80793F74, mode 3 (orbit)
+init 0x8079455C / calc 0x80794694 / positions 0x807941F0 / detach 0x80794AB0; throw on KartItem flags 0x244.
+
+Fake item box (vtable 0x808D1D60): release 0x807A7940 (70 / 45 / 10, 1 or 3 bounces), flight 0x807A79E0; kart hit
+0x8057325C -> action 2 unless mega, star or bullet.
+
+Bob-omb (vtable 0x808D1BE0): sub-states at 0x808D1B18 (flying 0x807A4B48, fuse 0x807A43FC, explode 0x807A45E0 /
+0x807A4734), runner 0x807A4CDC, nearest racer 0x807A5D88; explosion scale 36 (+3.12 per frame), radius 36 x the
+hit radius 29 = 1044; fuse caps 120 / 60 / 30 / 4 at 8 / 4 / 2 / 1 radii (`RaceConfig` +0xB6C: 180 at 50cc, 150 at
+100cc); kart hit 0x805731C8 -> action 7, action 0 after explosion frame 30.
+
+Thunder cloud (vtable 0x808D2480): spawned by the roulette 0x8079A298 (state = property +0x18, the update 0x807AF76C
+through 0x807A3908), passed on in the bump 0x80570DA8 -> 0x8079A578 -> 0x807B0B4C / 0x807B1108; strikes at 600
+(0x807987EC -> `KartMove` 0x805805EC: `applyLightningEffect(612, false, true)`), breaks after 690.
+
+Blue shell (vtable 0x808D23D8 over 0x808D2280, 0x338 bytes): states at 0x808D2308 (runner 0x807AD118): 0 slide
+(130), 1 route (calcRoute 0.008 with the branch search; re-chooses its target each frame and locks on through
+0x807B45B0, or gives up after 1200 frames), 2 homing (0x807B43DC -> core 0x807B3FDC: aim point = target + 300 x its
+vel1Dir + radius x (cos side + sin dir), velocity blended 0.125 towards rate 0.5 x the offset, capped at the fly
+speed, never reversing; until within 800), 3 one turn round the target (0x807B4400: angle step 1000 + 35 per frame,
+radius shrinking 4 / 8; ends at angle 0x11F40), 4 dive (0x807B4430: towards 210 ahead of the target at a rising
+height, 25 frames), 5 descent (box collision back, squash 0x8079FD84, explodes on the course), 6 explosion (as the
+bob-omb's: 36 x 29 = 1044, +0x334 at 30, kart hit 0x805731B0 -> action 7 then 0). Target choice 0x807AC1A8: the best
+racer still racing who is not the thrower; the thrower itself when it leads. KartMove +0x38 / +0x44 / +0x74 are
+Kinoko's smoothedUp / up / vel1Dir.
+
+POW (`PowManager` 0x809C3640): use 0x807B1DB4 (159-frame timer; targets: everyone ranked ahead of the user), update
+0x807B22F8 (shakes at 143, 95, 45 left: 0x807B20BC sets KartAction +0xF8 = target, hops +6 / +10 unless airtime over
+20 on the first two, and the last starts the global strike 0x805674FC: 15 frames at 0x809C1898). `KartMove`
+0x805810A8 (in `KartMove::calc` before the mega / star / shock block): a trick-up input opens a 10-frame dodge window
+(+0x152); strike && target && touching ground -> action 11 (start 0x80568064: rotation 3, or 1 when dodged, +20 up,
+items lost; calc 0x805683B8: the action 1 spin, params 0.96 / 0.96 / 3 past 360 degrees; trick up in its first 8
+frames: 0x80568558 switches to rotation 1 keeping the angle). The table at 0x808B62A0 that also reaches 0x805805EC /
+0x80580648 is the online status replication (0x8058D644), not the offline path.
+
+Blooper (`GessoManager` 0x809C3610): use 0x807A81B4 (timer from 1; target frame = the `start` CHR of `gesso.brres` +
+30 = 100), update 0x807A92B0 (at the target frame 0x807A972C picks the racers ranked ahead; player i is inked at
+148 + target + 3 x {3, 1, 4, 11, 5, 9, 2, 6, 10, 8, 7, 0}[i] through `KartMove` vtable +0x20 = 0x80581A58).
+
+Bullet bill: use 0x807A9AFC -> 0x807986E4 -> `KartMove::activateBullet` 0x805858AC (hard speed limit 145, hitbox
+scale = stats +0x184 (mega scale), the effect clear at vtable +0x2C 0x805837CC, dir from the main rotation, extVel /
+dynamics +0xB0 / +0xC8 cleared, turn values cleared, top rate 0.3, `KartKiller` start, KartMove +0x180 = 1.5) ->
+`KartKiller` (accessor +0x60; start 0x8059B7B8, calc 0x8059BC44, cancel 0x8059C118). `KartMove::calc` has its own
+bullet path (top, end jump pad, pads, dirs, killer, sticky road, offroad, manual drift, scale, cannon, then ink and
+acceleration; no rotation); `calcAcceleration` pins speed and soft limit to 145 x engine factor x killer +0x2C;
+`calcTop` blends smoothedUp towards +0x19C at +0x198 while the killer flies. KartMove offsets: +0xF4 divingRot, +0x104
+outsideDriftBonus, +0x158 realTurn, +0x15C weightedTurn, +0x288 rawTurn, +0x174 hitboxScale, +0x178 shock speed
+multiplier, +0x17C megaScale, +0x180 bullet scale (total scale = +0x160 x +0x180 x (+0x178 x +0x17C)). KartDynamics:
++0x74 extVel, +0xB0 movingRoadVel, +0xE4 angVel2, +0xF0 mainRot, +0x170 forceUpright, +0x171 noGravity, +0x172
+killExtVelY, +0x174 bike-as-kart. KartState +0x88 stick X.
+
+## Item hand anchors and the kart body rumble (sixth pass, 2026-11-02)
+
+Where a thrown or dropped item starts (`ItemObj::calcRelease` 0x807A25B0 → `KartModel` 0x807D171C):
+
+```c
+// KartModel (PlayerModel): +0x78 Matrix34f seat offset = makeT(0, dispY, dispZ) from kartDriverDispParam.bin
+//   (36 vehicles x 48 characters x 14 floats, floats 0 and 1); +0x114 driver matrix; +0x6C0 throw anchor (x,y,z);
+//   +0x6CC drop anchor; +0x104 skeleton node table (36 x 0x60: +0x00 parent, +0x04 child, +0x08 next, +0x14 slot
+//   name, +0x18 ResNodeData, +0x24 Matrix34f, +0x54 translation); +0x108 root node; +0x6C PlayerModel's driver
+//   resources (+0x28 nw4r::ut::List of the driver's animation slots: 0x15 "throw_f", 0x17 "throw_b", 0x1E ...).
+// PlayerModel_init 0x807C8758: for slot 0x15 and 0x17, pose the skeleton (0x807CAE8C, below) with that CHR0 at frame
+//   4.0 and copy node 13 ("wrist_r1") +0x54 into +0x6C0 / +0x6CC. Slot names: skl_root leg_l1 leg_l2 ankle_l1 leg_r1
+//   leg_r2 ankle_r1 spin arm_l1 arm_l2 wrist_l1 arm_r1 arm_r2 wrist_r1 face_1 cap1 mouth_1 ca_mouth_1 yo_mouth_1
+//   tang_1 tang_2 tang_3 tie_1 wing_l1 wing_r1 tail_1 tail_2 tail_3 skirt_1 d_hair_1 d_hair_2 p_hair_1 p_hair_2,
+//   then three spare slots for other bones (0x807C7E7C). A global (bss 0x809C38D0, 0 so far) clamps +0x6C4 from below.
+// 0x807CAE8C pose(frame, node, parentMtx, parentScale, &chr0): track = the CHR0 track named like the node's bone
+//   (ResDic_GetIndex; the root falls back to track 0), result = ResAnmChr::GetAnmResult(frame, chr0, track)
+//   (0x80055540: scale 0x80053D00, rotation 0x80054460 -> MTX34RotXYZFIdx(angles * 256/360), translation
+//   0x80054ED0; keyframe formats 1/2/3 = hermite with fres(span) refined once, formats 4-6 per frame),
+//   node matrix per flags 0x20 (no rotation) / 0x40 (no translation) (0x80055600), scale (1,1,1) if flag 8
+//   (0x800555C0); with a parent: translation *= parent scale, mtx = parent * mtx; recurse child, then next sibling.
+// 0x807D171C handPosition(model, forward, &pos, &kartPos, itemRadius*itemScale):
+//   local = forward ? (0, +0x6C4, +0x6C8) : (0, +0x6D0 + d, +0x6D4 - d),
+//   d = (1 - speedRatioCapped) * (itemRadius + KartCollide+0x14 boundingRadius) / max(1, 5 * (1 + zAxis.y));
+//   local *= (scale.x, max(1, scale.y), scale.z); pos = PSMTXMultVec(+0x114, local); kartPos = pos().
+// calcRelease: FromKart (forward throw) frames 0-1 -> handPosition(1); else frame 0 (= release frame 2) ->
+//   handPosition(0); the object's +0xBC (prevPos) = kartPos.
+// Driver matrix (PlayerModel_update 0x807CB360 / 0x807CB530): +0x114 = bodyRot * +0x78, the +0x78 translation
+//   scaled by the kart scale when it is not (1,1,1); bodyRot = KartBody +0x1C, King Boo (character 0x13) uses pose().
+// KartBody +0x1C (0x8056CE98, from PlayerSub_updateTransforms 0x8059783C, after calcPass1, before the model):
+//   counter(u16 +0xA4) += BSP +0x258 rumbleSpeed; y = SinFIdx(counter * (1/256)) * BSP +0x254 rumbleHeight * scale.y;
+//   +0x1C = makeQT(fullRot, pos) * makeT(0, y, 0). The counter is never reset; it has advanced 173 times at race
+//   frame 0 (measured on test1-3, both racers). Kinoko: KartBody::calcMatrix, DriverItemAnchor, KartModel.
+```
+
+## Item-item collision and action 0 (seventh pass, 2026-11-02)
+
+```c
+// ItemObj_update 0x8079EFEC: if (boxColUnit && !Landed) { BoxColManager::search(unit, Item|Object|Drivable);
+//   itemItem 0x807A1C94; itemObject 0x807A1ED8 } else if (kind == bob-omb) { search(unit, Object|Drivable); itemObject }
+// 0x807A1C94 for each BoxColManager::getNextItem(): this not trailing -> 0x807A0E28(this, other) (skip self);
+//   this trailing -> skip if !other.boxColUnit or (other.OwnerImmune && same owner); handle if !other.trailing ||
+//   this.globalIdx <= other.globalIdx || other.online. Hit: spheres (ro + rt) now, or both spheres against the
+//   other's previous position. Then r1 = response(this, other), r2 = response(other, this),
+//   apply(this, r1, other.pos, other.vel); apply(other, r2, this.pos, this.vel before).
+// 0x807A0E28 free vs free: skip if other trailing / no unit; skip if other not landed and other.idx < this.idx;
+//   online pairs only when a response is 1.
+// 0x807A139C response: table 0x808A4DFC [this kind][other kind] (holder order), see ItemObj.cc. Other exploding
+//   (bob-omb sub-state 2 / blue state 6): (!weakened && !this.Dropped) ? 2 : 0, then team check (bss 0x809C38BD).
+// 0x807A18FC apply(response, otherPos, otherVel): Breaking -> nothing; (!flags2 bit 6 && Dropped && !survivesHits)
+//   -> vanish. 1: not trailing; delta = prevPos - otherPos; (!Landed && WallSlide) -> contact 0x807A1680; else
+//   WallSet; vel . delta <= 0: normalise delta, onWall ptmf(otherVel, delta), !Landed && |pos - otherPos| <
+//   hitRadius -> pos.xz = otherPos.xz + delta.xz * hitRadius; vel . delta > 0: same push after normalising.
+//   2: trailing -> KartItem[owner] trail detach 0x807951AC; |otherVel| == 0 -> knockedAway(otherPos, otherVel,
+//   <unset>, 0); else dir = normalise(pos - otherPos with y >= 0), knockedAway(otherPos, dir * 15, dir, 0); break.
+// 0x807A1680 contact(otherPos, delta): Contact set -> normalise delta, delta . contactNrm > 0.5 -> vel.xz = 13 *
+//   delta.xz. |pos - otherPos| < hitRadius -> WallSet; first contact and vel . delta < 0 -> u = Random.getU32(0x10000),
+//   SinCosFIdx(u / 256) -> contactNrm.x = sin, .z = cos, vel.xz = 13 * contactNrm.xz, Contact. Contact ->
+//   colInfo.wallDist > -FLT_MIN -> contactNrm.xz = normalise(wallNrm.xz) (0x807A1864).
+// Kart action tables (ptmf, 12 bytes each): start 0x808B4D40, calc 0x808B4E18, end 0x808B4EF0. Action 0 start
+//   0x80567F68 = startRotation(1) + rumble; calc 0x80568204 and end 0x8056837C are action 1's.
+```
+
+## Respawn (eighth pass, 2026-11-03)
+
+```c
+// MapdataJugemPoint (0x30 bytes, ctor 0x805183A8): +0 SData*, +4 rot in radians, +0x10 rotate(q, -ez),
+//   +0x1C rotate(q, -ex) with q = setRPY(rot * DEG2RAD); +0x28 nearest ENPT ahead, +0x29 nearest ITPT ahead
+//   (0x805184FC from CourseMap::init 0x80512AE8: forward/right/up = rotate(q, ez/ex/ey), tan = SinFIdx(10.6667) /
+//   CosFIdx(10.6667) (15 deg); for each point: d = p - pos, a = fwd.d (skip if a < 0), r = a * tan, s = right.d,
+//   u = up.d; keep if s*s + u*u < r*r and (none yet or a < best); none -> 0); +0x2A = range % 100 (99 -> -1),
+//   +0x2C = range / 100 (range < 0: -1, 0); +0x2C > 0 -> respawn sound (+0x2C - 1).
+// 0x8051896C getRespawnPos(out, playerIdx): gameMode 2 or 5 (TT, ghost) -> idx = 0xFF -> pos. Else table
+//   0x8088FA08 s8 [12][2] = {-1,0},{1,0},{-3,0},{3,0},{-1,1},{1,1},{-3,1},{3,1},{-1,2},{1,2},{-3,2},{3,2}:
+//   out = pos + (+0x1C) * (150 * t[idx][0]) + (+0x10) * (300 * t[idx][1]).
+// 0x80584334 doRespawn: jugem = RaceManager::jugemPoint(idx) 0x8053621C; pos = getRespawnPos(idx); rot = (0,
+//   SData.rot.y, 0); camera 0x806AC400(cameraMgr[809C21D0]->+0x68[idx], &pos); pos.y += 700;
+//   setInitialPhysicsValues(pos, rot) 0x80584044; 0x80590E28 -> KartCamera::initPos; KartItem::clear 0x80798848;
+//   KCL probe checkSpherePartialPush(r 250, pos, (pos.x, pos.y + 300, pos.z), 0x20E80DFF): closest entry attribute
+//   >> 8 & 7 -> 0x80591924(kart, variant) -> light/shadow params (0x80560648) for accessor +0x44 and +0x48;
+//   Lakitu 0x8071E734(jugemMgr[809C28B8], idx, jugem); status0 &= ~TriggerRespawn, status1 |= InRespawn;
+//   cameraMgr obj +0x69 = 1; optional managers [809C4748]+0x4EC[idx] = 1, [809C496C]+0x1F68[idx] = 1;
+//   Enemy::AI::onOutOfBounds(jugem) 0x807263B0; if getItemPoint(jugem+0x29): KartItem::setItemPoint(idx, true)
+//   0x807B99D4; jugem+0x2C > 0 -> sound.
+// Other jugem users: 0x80538FEC / 0x805391E4 group respawn points by +0x2A (battle), not ported.
+```
