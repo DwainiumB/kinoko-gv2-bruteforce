@@ -1,5 +1,7 @@
 #include "ObjectKoopaBall.hh"
 
+#include "game/item/ItemDirector.hh"
+
 #include "game/field/CollisionDirector.hh"
 
 #include "game/kart/KartCollide.hh"
@@ -148,6 +150,12 @@ void ObjectKoopaBall::calcExploding() {
         setPos(EGG::Vector3f(railPos.x, m_initPosY, railPos.z));
         enableCollision();
         m_state = State::Intangible;
+    }
+
+    // While the blast is still live it also hits items and course objects (0x8079A654).
+    if (m_explodeTimer > EXPLODE_COLLISION_DURATION) {
+        constexpr f32 BLAST_RADIUS = 870.0f * 2.0f; ///< 0x808A3EA4 * 0x808CF3F4
+        Item::ItemDirector::Instance()->explodeAt(BLAST_RADIUS, pos(), Item::ItemObjKind::BobOmb);
     }
 }
 

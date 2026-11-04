@@ -5,6 +5,7 @@
 #include "game/item/ItemSlotData.hh"
 
 #include "game/field/BoxColManager.hh"
+#include "game/field/ObjectDirector.hh"
 
 #include "game/kart/KartObject.hh"
 
@@ -145,6 +146,52 @@ void ItemDirector::spawnFromObject(ItemObjKind kind, const EGG::Vector3f &pos,
     obj->m_flags.setBit(ItemObj::eFlags::Direct);
     objHolder.activate(obj);
     obj->placeFromObject(pos, vel);
+}
+
+/// @addr{0x807A3618}
+ItemObjBlastProbe::ItemObjBlastProbe() {
+    m_flags2.setBit(eFlags2::Unk6);
+}
+
+ItemObjBlastProbe::~ItemObjBlastProbe() = default;
+
+/// @brief The first stores of 0x807A3648: the blast's kind, centre and radius.
+void ItemObjBlastProbe::set(f32 radius, const EGG::Vector3f &pos, ItemObjKind kind) {
+    m_kind = kind;
+    m_pos = pos;
+    m_hitRadius = radius;
+}
+
+/// @addr{0x8079A654}
+/// @brief A course object explodes (Bowser's fireballs, the Shy Guy ship's cannonballs and, in the
+/// game, Moonview's bomb cars): every item whose hit sphere meets the blast is knocked away and
+/// broken, then the course objects inside it react as to an item of `kind` (always a bob-omb in
+/// the game's callers), through the stand-in item at +0x2A4 (0x807A3648).
+/// @details The item search uses the item and object bits (0xE), as the items' own search does.
+/// The object hits' reactions on the stand-in are not used. A wooden box broken this way credits
+/// its drop to the stand-in's owner, player 0 (its flags never say "no owner").
+void ItemDirector::explodeAt(f32 radius, const EGG::Vector3f &pos, ItemObjKind kind) {
+    m_blastProbe.set(radius, pos, kind);
+
+    Field::BoxColFlag flags;
+    flags.setBit(Field::eBoxColFlag::Item, Field::eBoxColFlag::Object, Field::eBoxColFlag::Drivable);
+    auto *boxColMgr = Field::BoxColManager::Instance();
+    boxColMgr->search(radius, pos, flags);
+
+    while (ItemObj *item = boxColMgr->getNextItem()) {
+        f32 reach = m_blastProbe.m_hitRadius + item->m_hitRadius;
+        if (!(m_blastProbe.m_pos.ps_sqDistance(item->m_pos) < reach * reach)) {
+            continue;
+        }
+
+        s32 response = (kind == ItemObjKind::BobOmb || kind == ItemObjKind::BlueShell) ?
+                2 :
+                item->itemPairResponse(&m_blastProbe);
+        item->calcItemPairResponse(response, m_blastProbe.m_pos, m_blastProbe.m_vel);
+    }
+
+    [[maybe_unused]] size_t hits = Field::ObjectDirector::Instance()->checkItemObjectCollision(
+            m_blastProbe.m_hitRadius, &m_blastProbe, m_blastProbe.m_pos);
 }
 
 /// @addr{0x8079A578}

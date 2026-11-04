@@ -1,5 +1,7 @@
 #include "ObjectHeyhoBall.hh"
 
+#include "game/item/ItemDirector.hh"
+
 #include "game/field/ObjectDirector.hh"
 
 namespace Kinoko::Field {
@@ -104,6 +106,10 @@ void ObjectHeyhoBall::calcExploding() {
 
         m_intensity = m_currentFrame >= SPIN_FRAME ? ExplosionIntensity::SpinSomeSpeed :
                                                      ExplosionIntensity::ExplosionLoseItem;
+
+        // Every frame of the blast also hits items and course objects (0x8079A654).
+        constexpr f32 BLAST_RADIUS = 1500.0f; ///< 0x808C4BB8
+        Item::ItemDirector::Instance()->explodeAt(BLAST_RADIUS, pos(), Item::ItemObjKind::BobOmb);
     }
 }
 

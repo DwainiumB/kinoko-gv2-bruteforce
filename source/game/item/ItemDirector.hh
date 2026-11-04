@@ -18,6 +18,21 @@ class Context;
 /// @brief Pertains to item handling.
 namespace Item {
 
+/// @brief The stand-in item ItemDirector keeps at +0x2A4 for blasts of course objects
+/// (ItemDirector::explodeAt): never on the course, no box collision unit, no velocity, its
+/// second flag word 0x40 so that hits never make it vanish (set up by 0x807A3618).
+class ItemObjBlastProbe final : public ItemObj {
+public:
+    ItemObjBlastProbe();
+    ~ItemObjBlastProbe() override;
+
+    [[nodiscard]] StateFunc initialState() const override {
+        return nullptr;
+    }
+
+    void set(f32 radius, const EGG::Vector3f &pos, ItemObjKind kind);
+};
+
 /// @addr{0x809C3618}
 class ItemDirector : EGG::Disposer {
     friend class Host::Context;
@@ -33,6 +48,7 @@ public:
     void spawnFromObject(ItemObjKind kind, const EGG::Vector3f &pos, const EGG::Vector3f &vel,
             u8 playerIdx);
     void passThunderCloud(u8 fromIdx, u8 toIdx);
+    void explodeAt(f32 radius, const EGG::Vector3f &pos, ItemObjKind kind);
     [[nodiscard]] size_t checkKartCollision(const Kart::KartObject *kart,
             std::array<ItemObj *, MAX_KART_HITS> &hits);
 
@@ -81,6 +97,7 @@ private:
 
     owning_span<KartItem> m_karts;                                             ///< +0x14
     std::array<ItemObjHolder, static_cast<size_t>(ItemObjKind::Count)> m_holders; ///< +0x48
+    ItemObjBlastProbe m_blastProbe;                                            ///< +0x2A4
     s32 m_overLimit;                                                           ///< +0x42C
     ItemBlooperManager m_blooperManager; ///< @addr{0x809C3610} (a separate instance in the game)
     ItemPowManager m_powManager;         ///< @addr{0x809C3640} (a separate instance in the game)
