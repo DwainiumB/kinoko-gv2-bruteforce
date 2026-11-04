@@ -31,6 +31,7 @@ public:
             Cpu = 1,   // Added in Kinoko: inputs written by the host program each frame (a CPU
                        // driver)
             Ghost = 3, // Inputs managed by ghost
+            Remote = 4, // Another console's racer online; Kinoko cannot drive one yet
             None = 5,
         };
 

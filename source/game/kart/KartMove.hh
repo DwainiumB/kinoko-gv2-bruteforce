@@ -345,6 +345,13 @@ public:
         return m_hardSpeedLimit;
     }
 
+    /// @brief For a remote racer online: the soft speed limit its console sent. The game unpacks it
+    /// into KartNetReceiver +0x84 (0x80589F64) from KartMove +0x18 of the sender (packed by
+    /// 0x8058CB30); Kinoko has no network, so a host must set it.
+    void setReceivedSoftSpeedLimit(f32 limit) {
+        m_receivedSoftSpeedLimit = limit;
+    }
+
     [[nodiscard]] const EGG::Vector3f &smoothedUp() const {
         return m_smoothedUp;
     }
@@ -466,6 +473,7 @@ protected:
     f32 m_lastSpeed;      ///< Last frame's speed, cached to calculate angular velocity.
     f32 m_processedSpeed; ///< Offset 0x28. It's only ever just a copy of @ref m_speed.
     f32 m_hardSpeedLimit; ///< Absolute speed cap. It's 120, unless you're in a bullet (140).
+    f32 m_receivedSoftSpeedLimit; ///< KartNetReceiver +0x84: a remote racer's floor (bit 131).
     f32 m_acceleration;   ///< Captures the acceleration from player input and boosts.
     f32 m_speedDragMultiplier;  ///< After 5 frames of airtime, this causes speed to slowly decay.
     EGG::Vector3f m_smoothedUp; ///< A smoothed up vector, mostly used after significant airtime.

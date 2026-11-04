@@ -48,6 +48,7 @@ KartMove::KartMove() : m_smoothedUp(EGG::Vector3f::ey), m_scale(1.0f, 1.0f, 1.0f
     m_engineSpeedFactor = ENGINE_SPEED_FACTORS[static_cast<size_t>(
             System::RaceConfig::Instance()->raceScenario().engineClass)];
 
+    m_receivedSoftSpeedLimit = 0.0f;
     m_powDodgeTimer = 0;
     m_powHit = false;
     m_bulletScale = 1.0f;
@@ -1604,6 +1605,12 @@ void KartMove::calcAcceleration() {
     // frames of the wobble (0x8057BF08, checked against a Dolphin recording).
     if (status.onBit(eStatus::WheelieBumpWobble)) {
         speedLimit *= WHEELIE_BUMP_SPEED_FACTOR;
+    }
+
+    // 0x8057BF1C: a racer driven by another console never goes below the soft speed limit that
+    // console sent (KartNetReceiver +0x84).
+    if (status.onBit(eStatus::OnlineRemote) && m_receivedSoftSpeedLimit > speedLimit) {
+        speedLimit = m_receivedSoftSpeedLimit;
     }
 
     if (m_softSpeedLimit <= speedLimit) {

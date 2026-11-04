@@ -106,6 +106,7 @@ enum class eStatus {
     MovingWaterVertical = 105,
     EndHalfPipe = 107,
 
+    OnlineRemote = 131, ///< Driven by another console online (set once, by the KartState constructor).
     AutoDrift = 133, ///< True if auto transmission, false if manual.
     Ghost = 134,     ///< A ghost racer: no kart-kart collision. Never set yet.
     NoSlipstreamBoost135 = 135, ///< Role not identified; a charged slipstream doesn't start while set.

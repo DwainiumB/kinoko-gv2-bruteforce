@@ -5,7 +5,9 @@
 #include "game/kart/KartDynamics.hh"
 #include "game/kart/KartJump.hh"
 #include "game/kart/KartMove.hh"
+#include "game/kart/KartParam.hh"
 
+#include "game/system/RaceConfig.hh"
 #include "game/system/RaceManager.hh"
 
 namespace Kinoko::Kart {
@@ -43,14 +45,34 @@ KartState::KartState() {
 /// to already reflect the controller's drift type, per its own comment, so it's set first here.
 void KartState::init() {
     m_status.changeBit(inputs()->driftIsAuto(), eStatus::AutoDrift);
+    m_status.changeBit(IsOnlineRemote(param()->playerIdx()), eStatus::OnlineRemote);
     reset();
+}
+
+/// @addr{0x805944B0}
+/// @brief The KartState constructor's test for status bit 131. It reads the flag 0x809C1951, which
+/// KartObject creation (0x8058F5B4) sets for this kart only in an online race (game mode 7 to 10)
+/// when the player type is 4 (remote). The local-player flag 0x809C1950 (bit 130) is tested first,
+/// but the two cannot both be set.
+bool KartState::IsOnlineRemote(u8 playerIdx) {
+    using GameMode = System::RaceConfig::Scenario::GameMode;
+    using PlayerType = System::RaceConfig::Player::Type;
+
+    const auto &scenario = System::RaceConfig::Instance()->raceScenario();
+    s32 mode = static_cast<s32>(scenario.gameMode);
+    bool online = mode >= static_cast<s32>(GameMode::Online_Private_Versus) &&
+            mode <= static_cast<s32>(GameMode::Online_Private_Battle);
+    return online && scenario.players[playerIdx].type == PlayerType::Remote;
 }
 
 /// @addr{0x80594594}
 void KartState::reset() {
     // In the base game, we only wipe bitfield 0, 1, 2, and 3, so we need to bring back bitfield4.
     bool isAutoDrift = m_status.onBit(eStatus::AutoDrift);
-    m_status.makeAllZero().changeBit(isAutoDrift, eStatus::AutoDrift);
+    bool isOnlineRemote = m_status.onBit(eStatus::OnlineRemote);
+    m_status.makeAllZero()
+            .changeBit(isAutoDrift, eStatus::AutoDrift)
+            .changeBit(isOnlineRemote, eStatus::OnlineRemote);
 
     m_airtime = 0;
     m_top.setZero();

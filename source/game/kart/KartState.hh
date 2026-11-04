@@ -16,6 +16,7 @@ public:
 
     void init();
     void reset();
+    [[nodiscard]] static bool IsOnlineRemote(u8 playerIdx);
 
     void calcInput();
     void calc();
