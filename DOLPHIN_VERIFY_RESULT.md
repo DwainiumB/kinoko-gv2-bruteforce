@@ -322,6 +322,23 @@ and 22 (item boxes and players). The difference is objects Kinoko does not simul
 cannot be compared frame by frame, and offline nothing physical reads it. A confirming recording is not possible
 offline for the same reason: the value has no reader.
 
+## Status bit 131: a racer driven by another console (ported 2026-11-04, uncommitted)
+
+The only writer of bit 131 (KartState +0x14, mask 0x8) is the KartState constructor (0x805943B4), and nothing clears
+it (`reset` wipes words 0 to 3 only). It is set when KartObject creation (0x8058F5B4) found the race online (game
+mode 7 to 10) and the player type 4 (remote): a racer whose inputs come from another console. The constructor sets
+the neighbouring bits from the same player type: 128 CPU, 129 local (the bit the recordings always show), 130 local
+online, 134 ghost. In `calcAcceleration` (0x8057BF1C) bit 131 raises the speed limit to a floor, the soft speed limit
+the other console sent (KartNetReceiver +0x84, unpacked from the sender's KartMove +0x18). Kinoko now has the bit
+(`OnlineRemote`), sets it under the same condition (with a new player type `Remote`), keeps it through `reset`, and
+applies the floor from `KartMove::m_receivedSoftSpeedLimit`, which a host would fill from the network. About twenty
+other places read the bit (respawn, item hits, tricks, mini-turbo charge and others); they are listed in
+`docs/kart_collision_decomp.md`, thirteenth pass, and not ported.
+
+**Verified**: nothing changes, as expected (no Kinoko race can have a remote racer): no kart differences in the five
+recordings, items 15,400 / 10,777 / 10,638, 13/13 suite, 56/56 ghosts. A confirming recording would have to be an
+online race, with the remote racer's received data logged.
+
 ## Server-controlled random numbers (for lockstep online)
 
 What draws from the race's two generators in Kinoko today: the first (RaceManager +0x04) feeds offline item rolls
@@ -380,8 +397,8 @@ kart code), Frame Advance hotkey F (already set). CPU thread (dual core) off, as
 
 - `kinoko_host versus` CSV: five new columns `status0..status4`, Kinoko's status bits laid out as the game's five
   status words (KartState +0x04..+0x14), to compare with the logger's `status`. In both recordings the words are equal
-  on every frame except bits 61 and 129, which the game always has set and Kinoko never sets (roles unknown, no effect
-  seen).
+  on every frame except bits 61 and 129, which the game always has set and Kinoko never sets (no effect seen; 129 is
+  the local-player bit the KartState constructor sets for player type 0, see the bit 131 section).
 - `test2` dump: 26 lost Frame Advance presses, one of them advanced two frames (race frame 5605 is missing). No pad
   changed on that frame, and the diff is clean past it.
 
@@ -405,5 +422,5 @@ kart code), Frame Advance hotkey F (already set). CPU thread (dual core) off, as
   re-record; nothing past frame 6713 of `test3` or 18554 of `test4` has been compared. `test5` is compared to
   its end.
 - Two karts side by side at speed for a long time (only pushing at low speed so far).
-- Status bit 131 (caps the speed limit at `0x8059144C()+0x84` in `calcAcceleration`): not in Kinoko, never set in
-  either recording.
+- Status bit 131 (a racer driven by another console online; raises the speed limit to the soft limit that console
+  sent): ported 2026-11-04, but no recording or Kinoko race can have a remote racer.

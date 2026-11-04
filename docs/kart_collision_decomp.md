@@ -307,7 +307,7 @@ else if (wheelieRot > 0.0f) { rotDec = max(rotDec - 0.001f, -0.03f); wheelieRot 
 
 // KartMove::calcAcceleration 0x8057B9BC, right after speedLimit *= calcWallCollisionSpeedFactor():
 if (status bit 66 WheelieBumpWobble) speedLimit *= 0.4f;            // 0x8057BF08, 0x808B5B98
-if (status bit 131) speedLimit = min(speedLimit, (0x8059144C())->+0x84);   // not ported, bit unknown in Kinoko
+if (status bit 131) speedLimit = max(speedLimit, (0x8059144C())->+0x84);   // a remote racer online: thirteenth pass
 ```
 
 ## Order of the karts' passes (`KartObjectManager::calc` 0x8058FFE8)
@@ -902,3 +902,39 @@ code use it there).
 **Measured**: Kinoko now makes the same draws in the same order (players 0 to n-1, each before its checkpoint
 search) and keeps the value as `RaceManager::Player::m_startRandomBit`. All five recordings stay bit-exact (no
 kart differences, items unchanged), 13/13 suite, 56/56 ghosts.
+
+## Status bit 131: a racer driven by another console (thirteenth pass, 2026-11-04)
+
+```c
+// Writers of the word KartState +0x14 bit 0x8 (scan of the whole image for ori / rlwinm on that word): only the
+// KartState constructor 0x805943B4. KartState::reset 0x80594594 wipes words 0 to 3 only, and nothing clears it, so it
+// lasts the race.
+// KartState constructor, word 4 (+0x14) from the race config player type (RaceConfig player +0x38):
+//   type 0 (local) -> 0x02 (bit 129), 1 (CPU) -> 0x01 (bit 128), 3 (ghost) -> 0x40 (bit 134);
+//   then 0x809C1950 ? 0x04 (bit 130) : 0x809C1951 ? 0x08 (bit 131).            // 0x80594490..0x805944C8
+// KartObject creation 0x8058F5B4, per kart: initPlayerTypeTemporaries 0x80592FA8 clears both bytes; if RaceConfig
+//   +0xB70 (game mode) is 7..10 (online): player type 0 -> 0x809C1950 = 1, type 4 (remote) -> 0x809C1951 = 1.
+//   With 0x809C1951 the kart also gets the remote KartMove (0x80577FC4, 0x294 bytes, KartObject 0x80595E08) and a
+//   remote data object (0x8058985C, 0xB4 bytes, KartObject +0x5C, read back through KartObjectProxy::kartNetReceiver
+//   0x8059144C = accessor +0x40). (A static initialiser at 0x805F8A4C zeroes the bytes at boot.)
+// So bit 129, which the recordings always show set and Kinoko does not have, is the local-player bit; bit 131 is set
+// only online, for a racer driven by another console.
+
+// KartMove::calcAcceleration 0x8057B9BC, after the wheelie-wobble factor (0x8057BF08):
+//   if (status bit 131 && receiver +0x84 > speedLimit) speedLimit = receiver +0x84;    // 0x8057BF1C, fcmpo + ble
+//   It raises the limit to a floor, not a cap (an earlier note here said min).
+// receiver +0x84: the remote racer's soft speed limit as its console had it. RacedataFactory_packRacedataRecord
+//   0x8058CB30 packs the sender's KartMove +0x20 (speed), +0x18 (soft speed limit) and +0x9C, each as a 4-bit
+//   quantised float (0x8052CDC8); the receiver 0x80589F64 reads them back (0x8052CE58) in that order into +0x80,
+//   +0x84, +0x88.
+// Other readers of bit 131 (all remote-racer special cases, not ported; Kinoko cannot have a remote racer):
+//   KartCollide::processFloor 0x8056EA04, the item hits 0x8057257C (0x80572684), activateOob 0x80573B00,
+//   updateRespawn 0x80573ED4, respawn 0x805799AC, trick start 0x80575D7C, mini-turbo charge 0x8057EE50, KartState
+//   input and collision updates 0x8059487C / 0x80594BD4, KartObject update 0x80596480, a dozen more in
+//   0x80571D98..0x8059B7B8, and five in 0x8053B4CC..0x8053B7A4 (found by scanning the image for the bit test).
+```
+
+**Measured**: Kinoko now has the bit (`eStatus::OnlineRemote`), sets it in `KartState::init` under the same condition
+(online game mode and player type 4, a new `RaceConfig::Player::Type::Remote`), keeps it through `reset`, and applies
+the floor from `KartMove::m_receivedSoftSpeedLimit` (set by a host; Kinoko has no network). No race Kinoko can run has
+a remote racer, so all five recordings stay bit-exact, 13/13 suite, 56/56 ghosts.
