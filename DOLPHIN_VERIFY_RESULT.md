@@ -339,6 +339,40 @@ other places read the bit (respawn, item hits, tricks, mini-turbo charge and oth
 recordings, items 15,400 / 10,777 / 10,638, 13/13 suite, 56/56 ghosts. A confirming recording would have to be an
 online race, with the remote racer's received data logged.
 
+## Course objects hit by items and by special karts (ported 2026-11-04, uncommitted)
+
+The kart-vs-object search (`ObjectDirector` 0x8082AB04) reads the hit tables in one of four columns: a kart in no
+special state, in a star, a mega mushroom or a bullet bill (0x8082B4E0). Kinoko read the first column only, which is
+right for Time Trials but makes a star kart bounce off a wooden box it should break, for example. For a kart in no
+special state, the object column is 0 for every Goomba, cow, car, Wiggler, Thwomp and the like, so in VS these
+objects react only to items and to karts in a star or mega mushroom. Their hit states are now ported:
+
+- Goombas squash (collision off, then hidden and grown back after the course's setting, about 630 frames on
+  Mushroom Gorge) and drop a mushroom along their knock direction, credited to the hitter; the drop makes no random
+  draw (`ItemDirector::spawnFromObject`, as for wooden boxes). As in the game, a hit Goomba walks its rail twice
+  per frame while it recovers.
+- Cows lose their collision while their model jumps; Moonview and Coconut Mall cars fly up and land (the Moonview
+  cars keep the per-player squash timers the game has, which Kinoko had merged into one); Chain Chomps jump; bats
+  fly off and come back with the spawner (their reset draws the race generator, as in the game); Wiggler parts hop
+  with their collision off and the hit runs along the body in a wave; Shy Guys and penguins spin; Piranha Plants
+  go into their damage state; parasols hop; fireballs (Boble) fly off with six draws from the object generator;
+  stationary and patrolling Thwomps spin, and Thwomps standing still bounce every item.
+- Also from the same search: a kart in an action no longer calls the objects' wall and hit callbacks (the game's
+  default ones only make effects).
+
+Not ported, with the reason in `docs/kart_collision_decomp.md` (fourteenth pass): crabs (their hit lives inside a
+large walk state machine Kinoko simplified), Cataquacks (their hit feeds the VS chase AI, which Kinoko does not
+have), the Piranha Plants' VS targeting, and Moonview Highway's bomb cars (Kinoko cannot load them, so a VS race on
+Moonview Highway does not start).
+
+**Verified**: no change in the five recordings, as expected (none has these objects hit): no kart differences,
+items 15,400 of 15,400 (`test4`), 10,777 of 10,777 (`test5`), 10,638 of 11,435 (`test3`), 13/13 suite, 56/56
+ghosts. A self-check forcing a star-kart hit on every object on 11 courses ran without a crash and showed each
+sequence end with the object back to normal. Confirming recordings (Dolphin, with object state logged): a star or
+mega kart through a Goomba on Mushroom Gorge (and the mushroom it drops), shells into the cows on Moo Moo Meadows,
+a star into a Coconut Mall car, a shell into a Wiggler on Maple Treeway, a star through Thwomps on Bowser's Castle,
+and a red shell into a Dry Dry Ruins bat (the bat's reset draws the race generator).
+
 ## Server-controlled random numbers (for lockstep online)
 
 What draws from the race's two generators in Kinoko today: the first (RaceManager +0x04) feeds offline item rolls
@@ -418,6 +452,8 @@ kart code), Frame Advance hotkey F (already set). CPU thread (dual core) off, as
 
 ## Still to compare
 
+- Course objects hit by items or by star / mega karts (and item-vs-course-object collision): ported, but no
+  recording exercises them.
 - Items: item-vs-course-object collision is ported but no recording exercises it; the stretches where Dolphin ran free (`test3` 6713 to 8431, `test4` 18555 to 20470) would need a
   re-record; nothing past frame 6713 of `test3` or 18554 of `test4` has been compared. `test5` is compared to
   its end.

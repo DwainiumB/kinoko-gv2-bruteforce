@@ -849,6 +849,7 @@ is operation order; the formulas were right.
 //   ObjectCarTGE 0x806D7780, ObjectCow 0x806BC3F0, ObjectHanachan 0x806C6E40, ObjectHeyho 0x806CF198,
 //   ObjectCrab 0x808862D4, ObjectPakkunF 0x8077502C, ObjectParasolR 0x80779A68, ObjectPoihana 0x80749504,
 //   ObjectBoble 0x8075E28C, ObjectBasabasaDummy 0x806B6A18. Their item hits use the default (return onItem).
+//   (All but the crab and the Cataquack are ported in the fourteenth pass.)
 
 // The shells' wall callbacks (+0x174, called by calcItemPairResponse reaction 1, for item-item and item-object):
 //   green / thrown 0x807B62B8 (set by initThrow 0x807B5178 from 0x808D25E0, thunk 0x807A3920):
@@ -938,3 +939,100 @@ kart differences, items unchanged), 13/13 suite, 56/56 ghosts.
 (online game mode and player type 4, a new `RaceConfig::Player::Type::Remote`), keeps it through `reset`, and applies
 the floor from `KartMove::m_receivedSoftSpeedLimit` (set by a host; Kinoko has no network). No race Kinoko can run has
 a remote racer, so all five recordings stay bit-exact, 13/13 suite, 56/56 ghosts.
+
+## Course objects hit by items and by special karts (fourteenth pass, 2026-11-04)
+
+```c
+// The kart search ObjectDirector 0x8082AB04 (Kinoko read column 0 only, "not in a star, mega or bullet"):
+//   column = 0x8082B4E0(kart): status bit 63 (star) -> 1, else bit 79 (mega) -> 2, else bit 91 (bullet) -> 3, else 0;
+//   onKart = GeoHitTableKart [slot(id)][column]; onObj = GeoHitTableKartObj [slot(id)][column];
+//   skips objects whose vt +0xD8 is false while status bit 88 is set (default 0x80681734 returns 0; nothing in
+//   Kinoko sets bit 88, its role is not identified: not ported);
+//   processKartReactions (vt +0xB8), r = onCollision (vt +0xC0);
+//   if !(status bit 32, in an action): r == 8 || r == 0x1A ? vt +0xCC (0x8081F5D8) : vt +0xC8 (0x8081F548)
+//     (both default to an effect and a sound; Kinoko had them unconditional and empty);
+//   obj +0xA8 = 1 (read only by the default effect); depth.y clamped at 0.
+// For a kart in none of the three states, the KartObj column of every object below is 0 (no reaction), so these
+// objects react only to items and to karts in a star, mega mushroom or bullet bill. Offline VS turns 5 into 3 and
+// 6 into 4 (0x8081F66C, 0x8081F778); Time Trials and online leave 5 / 6 and drop 3 / 4.
+// The "soko" lookups in onCollision overrides read the kart's column too: Dossun 0x8075FF98 (DossuncSoko),
+// Press 0x807782D4 (PressSoko), CarTGE 0x806D7328 (its dummy id, both tables), BasabasaDummy 0x806B6874 (both).
+// DAT_802a4130 in the decompiles is EGG::Vector3f::ey, 802a4100 the zero vector. 0x80590478 (kart, bool) is the
+// star / mega rumble (visual).
+
+// BasabasaDummy (bats): kart 0x806B6874, item 0x806B6A18 (onObj 3..6; null item: -base(2) * 80).
+//   Hit (state != 1): next state 1, +0x11C = hitter pos (unused), +0x128 = hitter vel (kart 0x80590D08 velocity;
+//   item vel, or (bat - item) normalised * 80 when |vel| < 30).
+//   enterState1 0x806B6288: vt +0x8C unregisterCollision; dir = hitVel, dir.y = |hitVel.xz| * sin(20) / cos(20)
+//   (FIdx 0.7111111 * 20), normalise2; +0xF4 = dir * 150 (+0x100). calcState1 0x806B652C: vel.y -= 2, pos += vel;
+//   the +0x14E branch is dead (nothing sets it); after 130 frames vt +0xC init (which draws the race generator
+//   3 times) and +0xF0 active = 0. Tumbling matrix and blinking visual.
+// Penguin 0x80775C58 / 0x80775CE0 (onObj 3/5) -> vt +0x108: base 0x80775D2C, PenguinS 0x80776D90 (saves state
+//   +0xD8): state 5, +0xC0 = 180, +0xC4 = 60. calc state 5: base 0x80775804 (rail, calcPos, 0x80775950, timer ->
+//   enterWalk), PenguinS 0x807766E8 (calcRail 0x807768A0, calcPos, 0x80775950; at the end state 2/3 -> stand-up 4
+//   with the anim's frame count, else enterWalk; +0xB4 = base(2)). 0x80775950: speed -= 1 (back up at < 12),
+//   rot.y += speed * DEG2RAD, calcTransform. calcRail also accepts state 5 at settings 0 and 1.
+// Kuribo (Goomba) kart 0x806DB764 (onObj 3/5), item 0x806DBA98 (3..6, null item allowed):
+//   0x806DD128 knock direction: flat = v - tangent0(+0xF8) * dot; +0xEC = +-base2(+0xDC) by the side of
+//   (railmid + flat) relative to the first-last rail line (0x806B38A8).
+//   0x806DC460 squash: vt +0x90 disableCollision, +0x12C = +0x130 = 1, +0x134 = 0, +0x136 = 1, +0x138 = 0;
+//   if +0x104 (!TT && item mode != none) 0x80799FBC(kind 3 mushroom, pos, +0xEC * 50, owner) (no random draw).
+//   0x806DC5E0 squash (+0x136): scaleY = 1 + amp * SinFIdx(40.743664 * (2pi * t / 20)), amp 1 below full height
+//   else 0.5; widen +0.1 up to 1.5; at < 0.1 -> hidden. 0x806DC790 hidden (+0x13C) until setting0 < t + squashT.
+//   0x806DC9D8 regrow (+0x144): scaleY = 1.5 * Sin(.. t / 40); ends when t > 10 && scaleY <= 1: vt +0x94.
+//   Every stage first calls calcAnim 0x806DCDDC again, so a hit Goomba walks twice per frame (as in the game).
+// Hwanwan (Chain Chomp) 0x806E9CAC (onObj 0: speed ratio < 0.5 -> wall; 3/5 -> next state 2), 0x806E9D6C (3..6).
+//   State 2 0x806EA288 / 0x806EA2FC: +0x404 = -1, +0x410 = 150 (50 on Mario Circuit with floor variant +0x49C == 1,
+//   set by checkFloorCollision 0x806EA784 from the closest KCL entry); y += 150 - 2.5 t until landed (t > 9 on the
+//   floor), then y += 0.6 * 150 - 2.5 (t - land); state 0 ten frames after landing. Spin and chain links visual.
+// CarA 0x806B7E60 / 0x806B802C: launch (+0x110 = 0, +0x118 = 2*90/3, +0x130 = 390/+0x118, +0x114 = pos.y,
+//   +0xF8 = ey); calc 0x806B82CC runs 0x806B89A8 instead of the follow-the-rail placement: y = base +
+//   parabola(90, 3, t) (bounce parabola(27, 3, t - land) after the first touch below the rail from frame 6), pitch
+//   +0x12C, matrix OrthonormalBasis(tangent) * makeRT(pitch); ends at the second landing (vt +0x94).
+// CarTGE 0x806D7328 / 0x806D7780: per player +0x1B1 squash flags and the manager's per-player timers (+0x120,
+//   0x806D50AC; Kinoko had one of each); launch 0x806D7EA4 (+0x208 = 200/3, +0x204 = 390/+0x208, disable
+//   collision) and flight 0x806D827C (roll about the forward axis 0x806B3AC4, corners +-350, one bounce at 30%,
+//   the static 0x808C5880 = 20 / 24 / 33 by the forward's slope; the landings take the model's matrix, Kinoko the
+//   car's own). Bomb cars (type 2, 0x806D7F58, exploding through 0x8079A654 kind 9) are not in Kinoko (PANIC).
+// Cow 0x806BC2AC / 0x806BC3F0 -> 0x806BCB28 (disable collision, timer +0x120 = 0); leader and follower calc tails
+//   0x806BD388 / 0x806BE1A8: timer++, 0x806BCBA4: model height parabola(45, 3, t); from t > 5 a 50 sphere at
+//   pos + h + 50 (0x64EBDFFF) ends it (enable collision). The other +0x120 reads guard animations.
+// Hanachan (Wiggler) parts 0x806C6C94 / 0x806C6E40 (not bob-ombs) -> 0x806C723C (disable collision, +0xC8 = 46);
+//   part calc 0x806C6C10 -> 0x806C72B8 (drawn hop parabola(70, 3, t), land (10 sphere, t > 5), second hop at half
+//   speed, collision back at the second landing, +0xD1). Manager 0x806C9860 tail 0x806CBBC4: a part on its first
+//   hop frame starts a wave; every 4 frames the next parts on both sides hop (+0xD2 on all parts blocks hits);
+//   it ends when the far end part lands. Touch wobble +0xB0 / +0xB4 / +0xB8 and colour fades visual; +0xE0 / +0xE1
+//   (WallSpark) are never set.
+// Heyho (Shy Guy) 0x806CF024 / 0x806CF198 -> 0x806CFAC0; calc 0x806CEDF8 runs 0x806CFB38 before the up
+//   interpolation: forward turned about up by -(40 t - 0.5 * (32/120) t^2) for 120 frames, then faster by 4 per
+//   frame until within 0.97 (not written back then, except while jumping off the floor).
+// PakkunF 0x80774F20 / 0x8077502C (null item too) -> 0x80774EB8: state 2, +0xBC = 180; calc state 2 back to wait.
+// ParasolR 0x8077971C / 0x80779A68: onObj 3/5 toggle (visual), 4/6 hop: +0xB8 = ey * 100, calc 0x80779174:
+//   vel.y -= 2, pos += vel, 0x80779400 bounce at a 100 sphere (0x20E80FFF): vel.y *= -0.2, stop below 0.2.
+// Boble 0x8075E1F4 / 0x8075E28C (item, onObj 3) -> 0x8075E2E0: six ObjectDirector::random draws (nextF32 180,
+//   nextF32 30, getU32 12 three times, getU32 3), speed 30 / 50 / 100 by |depth| + |hitter vel|; state 1
+//   0x8075DEAC: gravity 2, tumble, back on the rail at a setting-1 point after 180 frames (+0xC4 is never cleared).
+// Dossun 0x8075FF98 (onObj 3/5 -> vt +0x108), items 0x80760118 (stationary 0x80760AD4): Thwomps standing still
+//   bounce every item; vt +0x108 Normal 0x80760A44 (anm state 5, +0xF8 = 60, +0x100, +0x124 = 60), Syuukai
+//   0x8075FF08 (only while stomping); state 5 rises 30 per frame (0x807605EC, 0x8075F520); spin 0x80760634 /
+//   0x8075F584 (Normal from its calc 0x807602E0, stops after 60 frames near +0xFC; Syuukai in the last 30 cycle
+//   frames). Base / YokoMove / Dossunc 0x807642F8 (+0x124 = 2 movement state) and Tsuibi: not ported.
+
+// Not ported:
+//   Crab 0x808861AC / 0x808862D4: the hit puts the crab in state 2 (inert: both handlers return 0 then) inside the
+//     1272-line walk state machine 0x80883B98 (flight, KCL checks, resurfacing state 3), which Kinoko simplified for
+//     Time Trials. Needs a full port of 0x80883B98.
+//   Poihana (Cataquack) 0x80749378 / 0x80749504: its hit flags (+0x348 grabbed a kart, +0x349 knocked) feed the VS
+//     chase AI (states 2 to 7, target search 0x80747BFC), all stubs in Kinoko.
+//   PakkunF's VS targeting (0x807743E4 sets the timed wait +0xB8 only in TT and online; offline it attacks the
+//     nearest racer within 2000, 0x80782C14, and turns its head, +0xDC): Kinoko has only the timed wait.
+//   Moonview Highway bomb cars (and the manager's blast launches 0x806D52E0): Kinoko PANICs on them.
+```
+
+**Measured**: none of the five recordings has a kart in a star or mega touching an object, or an item hitting one
+of these objects, so all stay as before: no kart differences, items 15,400 / 10,777 / 10,638 bit-exact, 13/13 suite,
+56/56 ghosts. Self-check with a temporary hook (removed) forcing a star-kart hit on every object at frame 700 on 11
+courses (Mushroom Gorge, Moo Moo Meadows, Maple Treeway, Coconut Mall, DK Summit, Bowser's Castle, N64 Sherbet
+Land, GCN Mario Circuit, Dry Dry Ruins, Mario Circuit, Grumble Volcano): no crash; Goombas lose their collision and
+get it back after about 630 frames, cows after their jump (under 30 frames), Wiggler parts after about 80, cars fly
+about 1350 up and land, Thwomps and penguins spin.
