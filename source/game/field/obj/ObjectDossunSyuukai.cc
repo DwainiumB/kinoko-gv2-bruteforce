@@ -99,4 +99,18 @@ void ObjectDossunSyuukai::calcRotating() {
     }
 }
 
+/// @addr{0x8075FF08}
+/// @brief Only a stomping Thwomp can be made to spin (the animation is left out).
+void ObjectDossunSyuukai::startSpin() {
+    constexpr f32 SPIN_SPEED = 60.0f;
+
+    if (m_anmState == AnmState::Spinning || m_anmState == AnmState::Still) {
+        return;
+    }
+
+    m_anmState = AnmState::Spinning;
+    m_spinSpeed = SPIN_SPEED;
+    m_spinning = true;
+}
+
 } // namespace Kinoko::Field

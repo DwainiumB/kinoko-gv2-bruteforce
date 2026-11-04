@@ -122,7 +122,8 @@ Kart::Reaction ObjectPress::onCollision(Kart::KartObject *kartObj, Kart::Reactio
     // the base game instead uses ObjectId::PressSoko to induce LongCrushLoseItem.
     if (close && (m_state == State::Lowering || m_startedLowered)) {
         const auto &hitTable = ObjectDirector::Instance()->hitTableKart();
-        return hitTable.reaction(hitTable.slot(ObjectId::PressSoko));
+        return hitTable.kartReaction(hitTable.slot(ObjectId::PressSoko),
+                ObjectDirector::KartHitColumn(kartObj));
     }
 
     return reactionOnKart;

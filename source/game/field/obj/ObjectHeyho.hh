@@ -15,6 +15,10 @@ public:
     void calc() override;
     void loadAnims() override;
     void calcCollisionTransform() override;
+    Kart::Reaction onCollision(Kart::KartObject *kartObj, Kart::Reaction reactionOnKart,
+            Kart::Reaction reactionOnObj, EGG::Vector3f &hitDepth) override;
+    s32 onItemCollision(Item::ItemObj *item, s32 reactionOnItem, s32 reactionOnObj,
+            EGG::Vector3f &hitDepth) override;
 
     /// @addr{0x806D02B4}
     [[nodiscard]] u32 loadFlags() const override {
@@ -56,6 +60,8 @@ private:
     void calcStateTransition();
     void calcMotion();
     void calcInterp();
+    void startSpin();
+    void calcSpin();
 
     const s32 m_color;
     f32 m_apex;
@@ -72,6 +78,10 @@ private:
     bool m_freeFall;
     f32 m_launchVel;
     s16 m_spinFrame;
+    bool m_hitSpinning = false; ///< +0x152 Spun round by a hit.
+    u16 m_hitSpinFrame = 0;     ///< +0x154
+    f32 m_hitSpinDecel = 0.0f;  ///< +0x168
+    f32 m_hitSpinAngle = 0.0f;  ///< +0x178 Degrees at the end of the slowing part.
 
     static constexpr std::array<StateManagerEntry, 2> STATE_ENTRIES = {{
             {StateEntry<ObjectHeyho, &ObjectHeyho::enterMove, &ObjectHeyho::calcMove>(0)},

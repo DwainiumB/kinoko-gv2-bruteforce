@@ -1,5 +1,7 @@
 #include "ObjectPakkunF.hh"
 
+#include "game/kart/KartCollide.hh"
+
 namespace Kinoko::Field {
 
 /// @addr{0x807743A4}
@@ -26,6 +28,9 @@ void ObjectPakkunF::calc() {
         break;
     case State::Attack:
         calcAttack();
+        break;
+    case State::Damage:
+        calcDamage();
         break;
     default:
         break;
@@ -118,6 +123,64 @@ void ObjectPakkunF::enterAttack() {
     m_currAttackFrame = 0;
     auto *attackAnm = anmMgr->activeAnim(Render::AnmType::Chr);
     m_attackFrames = static_cast<s32>(attackAnm->frameCount()) + LINGERING_FRAMES;
+}
+
+/// @addr{0x80774F20}
+/// @brief A kart in a star, mega mushroom or bullet bill knocks the plant into its damage state
+/// (the rumble is left out). Any other touch only notes the racer for the VS targeting (see
+/// calcDamage), which Kinoko does not have.
+Kart::Reaction ObjectPakkunF::onCollision(Kart::KartObject * /*kartObj*/,
+        Kart::Reaction reactionOnKart, Kart::Reaction reactionOnObj,
+        EGG::Vector3f & /*hitDepth*/) {
+    if (reactionOnObj == Kart::Reaction::UNK_3 || reactionOnObj == Kart::Reaction::UNK_5) {
+        startDamage();
+    }
+
+    return reactionOnKart;
+}
+
+/// @addr{0x8077502C}
+/// @brief A null item (a blast) or an item with object reaction 3 or 5 knocks the plant over.
+s32 ObjectPakkunF::onItemCollision(Item::ItemObj *item, s32 reactionOnItem, s32 reactionOnObj,
+        EGG::Vector3f & /*hitDepth*/) {
+    if (!item) {
+        startDamage();
+    }
+
+    if (reactionOnObj == ItemHit::ObjHit || reactionOnObj == ItemHit::ObjHitRaceOnly) {
+        startDamage();
+    }
+
+    return reactionOnItem;
+}
+
+/// @addr{0x80774EB8}
+/// @brief 180 frames of the damage animation; an attack in progress stops (the head's collision
+/// goes back to its rest place).
+void ObjectPakkunF::startDamage() {
+    constexpr s32 DAMAGE_FRAMES = 180;
+
+    if (m_state == State::Damage) {
+        return;
+    }
+
+    m_state = State::Damage;
+    m_drawMdl->anmMgr()->playAnim(0.0f, 1.0f, 1);
+    m_attackFrames = DAMAGE_FRAMES;
+}
+
+/// @addr{0x80774754}
+/// @brief The damage part of the game's calc: back to waiting when the time is up.
+/// @details Offline VS races do not use the timed wait Kinoko has (0x807743E4 sets +0xB8 only in
+/// Time Trials and online): there the plant attacks the nearest racer within 2000 (0x80782C14)
+/// other than the last one it touched, turning its head toward where that kart will be
+/// (0x80774CB0, +0xDC). That targeting is not in Kinoko; only the timed wait is.
+void ObjectPakkunF::calcDamage() {
+    if (--m_attackFrames == 0) {
+        m_state = State::Wait;
+        m_waitFrames = m_waitDuration;
+        m_drawMdl->anmMgr()->playAnim(0.0f, 1.0f, 2);
+    }
 }
 
 } // namespace Kinoko::Field

@@ -89,7 +89,29 @@ public:
     /// @addr{0x806CCACC}
     void loadRail() override {}
 
+    void calc() override;
+
+    Kart::Reaction onCollision(Kart::KartObject *kartObj, Kart::Reaction reactionOnKart,
+            Kart::Reaction reactionOnObj, EGG::Vector3f &hitDepth) override;
+    s32 onItemCollision(Item::ItemObj *item, s32 reactionOnItem, s32 reactionOnObj,
+            EGG::Vector3f &hitDepth) override;
+
+    void startHop();
+
+    [[nodiscard]] bool isHopping() const {
+        return m_hopTimer >= 0;
+    }
+
 private:
+    void calcHop();
+
+    s32 m_hopTimer = -1;      ///< +0xC4 Frames since a hit, -1 when not hit.
+    u32 m_landFrame = 0;      ///< +0xC8 Frame of the first landing (46 before it).
+    bool m_landed = false;    ///< +0xD0
+    bool m_justLanded = false; ///< +0xD1 Landed again this frame (the hop is over).
+    bool m_inHitWave = false; ///< +0xD2 Set on every part while a hit wave runs along the body.
+    f32 m_hopHeight = 0.0f;   ///< +0xBC Drawn offset only.
+
     /// @addr{0x806CA5E4}
     void calcTransformFromUpAndTangent(const EGG::Vector3f &pos, const EGG::Vector3f &up,
             const EGG::Vector3f &tangent) {
@@ -155,10 +177,12 @@ public:
     void init() override;
 
     /// @addr{0x806C9860}
+    /// @details After the body, the game wobbles touched parts (visual) and runs the hit wave.
     void calc() override {
         calcRail();
         StateManager::calc();
         calcBody();
+        calcHitWave();
     }
 
     /// @addr{0x806CC9FC}
@@ -214,6 +238,7 @@ private:
     }
 
     void calcLateralMotion(f32 amplitude, f32 period, f32 wavelength, s16 frame);
+    void calcHitWave();
     [[nodiscard]] RailAlignment calcRailAlignment() const;
 
     /// @addr{0x806CAF9C}
@@ -235,6 +260,9 @@ private:
     }
 
     std::array<ObjectHanachanPart *, 7> m_parts;
+    s32 m_hitWaveTimer = -1;    ///< +0x134 Frames since a part was hit, -1 when none.
+    u8 m_hitWaveCenter = 0;     ///< +0x138 The part hit first.
+    u8 m_hitWaveFarPart = 0;    ///< +0x139 The end part the wave reaches last.
     HanachanChainManager m_chain;
     const f32 m_movingVel;
     std::array<float, 7> m_partDisplacement; ///< Total distance between a given part and the head

@@ -19,6 +19,23 @@ public:
         m_state = State::RotatingAfterStomp;
     }
 
+    void startSpin() override;
+
+    /// @addr{0x8075F520}
+    void calcSpinState() override {
+        calcRiseWhileSpinning();
+        if (m_spinning) {
+            calcSpin();
+        }
+    }
+
+    /// @addr{0x8075F584}
+    /// @brief The spin may stop in the last 30 frames of the stomp cycle.
+    void calcSpin() override {
+        constexpr s32 STOP_FRAMES = 30;
+        calcSpinRotation(m_cycleTimer < STOP_FRAMES);
+    }
+
 private:
     enum class State {
         Moving = 0,

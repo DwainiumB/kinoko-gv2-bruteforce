@@ -65,6 +65,11 @@ public:
         return m_railIdx;
     }
 
+    [[nodiscard]] const System::MapdataPointInfo::Point &point(size_t i) const {
+        ASSERT(i < m_points.size());
+        return m_points[i];
+    }
+
     [[nodiscard]] u16 pointCount() const {
         return m_pointCount;
     }

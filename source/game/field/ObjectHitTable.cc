@@ -38,6 +38,11 @@ Kart::Reaction ObjectHitTable::reaction(s16 i) const {
     return static_cast<Kart::Reaction>(m_reactions[i * m_fieldCount]);
 }
 
+/// @brief A kart table's reaction in `column` (ObjectDirector::KartHitColumn) of row `i`.
+Kart::Reaction ObjectHitTable::kartReaction(s16 i, s16 column) const {
+    return static_cast<Kart::Reaction>(reaction(i, column));
+}
+
 /// @brief The reaction in `column` of row `i` (an item table read by item object kind, as
 /// 0x8082ADBC does).
 s16 ObjectHitTable::reaction(s16 i, s16 column) const {

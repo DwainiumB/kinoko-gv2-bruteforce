@@ -20,6 +20,8 @@ public:
     void calc() override {
         if (m_state == State::Walk) {
             calcWalk();
+        } else if (m_state == State::Hit) {
+            calcHit();
         }
     }
 
@@ -44,17 +46,33 @@ public:
 
     virtual void enterWalk();
 
+    Kart::Reaction onCollision(Kart::KartObject *kartObj, Kart::Reaction reactionOnKart,
+            Kart::Reaction reactionOnObj, EGG::Vector3f &hitDepth) override;
+    s32 onItemCollision(Item::ItemObj *item, s32 reactionOnItem, s32 reactionOnObj,
+            EGG::Vector3f &hitDepth) override;
+
+    virtual void startHit();
+    virtual void calcHit();
+
 protected:
+    void calcHitSpin();
+
+    static constexpr s32 HIT_DURATION = 180;
+    static constexpr f32 HIT_SPIN_SPEED = 60.0f;
+
     enum class State {
         Walk = 0,
         Dive = 1,
         Slider = 2,
         SliderSlow = 3,
         StandUp = 4,
+        Hit = 5, ///< Knocked into a spin by an item or a kart in a star, mega mushroom or bullet.
     };
 
     State m_state;
     EGG::Vector3f m_basis;
+    s32 m_hitTimer;   ///< +0xC0 Frames left in the hit state.
+    f32 m_spinSpeed;  ///< +0xC4 Degrees per frame, from 60 down to 12.
 };
 
 /// @brief Represents the penguins on N64 Sherbet Land that slide on their stomach.
@@ -80,6 +98,9 @@ public:
         m_state = State::Walk;
     }
 
+    void startHit() override;
+    void calcHit() override;
+
     /// Added for Kinoko web's renderer: unlike the base ObjectPenguin (always Walk), this penguin
     /// has 5 real states (Walk/Dive/Slider/SliderSlow/StandUp) that move it very differently
     /// (walking vs. belly-sliding down a rail) -- without exposing which one is active, the
@@ -101,6 +122,7 @@ private:
     void calcRail();
 
     s32 m_anmTimer;
+    State m_stateBeforeHit; ///< +0xD8
 };
 
 } // namespace Kinoko::Field

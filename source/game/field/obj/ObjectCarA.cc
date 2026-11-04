@@ -36,6 +36,8 @@ void ObjectCarA::init() {
     m_changingDir = false;
     m_currUp = EGG::Vector3f::ey;
     m_currTangent = m_railInterpolator->curTangentDir();
+    m_launchPitch = 0.0f;
+    m_launchTimer = -1;
     resize(RADIUS, 0.0f);
     m_nextStateId = 0;
 }
@@ -49,7 +51,11 @@ void ObjectCarA::calc() {
     auto status = m_railInterpolator->calc();
     m_changingDir = (status == RailInterpolator::Status::ChangingDirection);
 
-    calcPos();
+    if (m_launchTimer == -1) {
+        calcPos();
+    } else {
+        calcLaunch();
+    }
 }
 
 /// @addr{0x806B7B44}
@@ -78,9 +84,101 @@ void ObjectCarA::calcCollisionTransform() {
 }
 
 /// @addr{0x806B7E60}
+/// @brief A slow kart bounces off; a kart in a star, mega mushroom or bullet bill launches the
+/// car (the rumble is left out).
 Kart::Reaction ObjectCarA::onCollision(Kart::KartObject *kartObj, Kart::Reaction reactionOnKart,
-        Kart::Reaction /*reactionOnObj*/, EGG::Vector3f & /*hitDepth*/) {
-    return kartObj->speedRatioCapped() < 0.5f ? Kart::Reaction::WallAllSpeed : reactionOnKart;
+        Kart::Reaction reactionOnObj, EGG::Vector3f & /*hitDepth*/) {
+    if (reactionOnObj == Kart::Reaction::None) {
+        if (kartObj->speedRatioCapped() < 0.5f) {
+            return Kart::Reaction::WallAllSpeed;
+        }
+    } else if (reactionOnObj == Kart::Reaction::UNK_3 || reactionOnObj == Kart::Reaction::UNK_5) {
+        startLaunch();
+    }
+
+    return reactionOnKart;
+}
+
+/// @addr{0x806B802C}
+s32 ObjectCarA::onItemCollision(Item::ItemObj * /*item*/, s32 reactionOnItem, s32 reactionOnObj,
+        EGG::Vector3f & /*hitDepth*/) {
+    if (reactionOnObj >= ItemHit::ObjHit && reactionOnObj <= ItemHit::ObjHitHardRaceOnly) {
+        startLaunch();
+    }
+
+    return reactionOnItem;
+}
+
+/// @brief Common part of both hit handlers: the car flies up 90 per frame (falling 3 per frame
+/// per frame) while pitching over at 390/60 degrees per frame. It keeps its collision, and keeps
+/// moving along its rail. A sound flag is left out.
+void ObjectCarA::startLaunch() {
+    constexpr f32 LAUNCH_SPEED = 90.0f;
+    constexpr f32 GRAVITY = 3.0f;
+    constexpr f32 PITCH_TOTAL = 390.0f;
+
+    if (m_launchTimer != -1) {
+        return;
+    }
+
+    m_launchTimer = 0;
+    m_launchPitch = 0.0f;
+    f32 airTime = (2.0f * LAUNCH_SPEED) / GRAVITY;
+    m_launchBaseY = pos().y;
+    m_landFrame = airTime;
+    m_landed = false;
+    m_launchPitchRate = PITCH_TOTAL / airTime;
+    m_currUp = EGG::Vector3f::ey;
+}
+
+/// @addr{0x806B89A8}
+/// @brief One frame of the launch: a parabola above the rail, a smaller bounce (30% of the speed)
+/// once it comes down below the rail, and back to normal when it lands again. The sounds are left
+/// out.
+void ObjectCarA::calcLaunch() {
+    constexpr f32 LAUNCH_SPEED = 90.0f;
+    constexpr f32 GRAVITY = 3.0f;
+    constexpr f32 BOUNCE_FACTOR = 0.3f;
+    constexpr f32 BOUNCE_PITCH = 30.0f;
+    constexpr s32 MIN_AIR_FRAMES = 6;
+
+    f32 height;
+    if (!m_landed) {
+        height = CalcParabolicDisplacement(LAUNCH_SPEED, GRAVITY, m_launchTimer);
+        m_launchPitch = m_launchPitchRate * static_cast<f32>(m_launchTimer);
+    } else {
+        u32 sinceLanding = static_cast<u32>(static_cast<f32>(m_launchTimer) - m_landFrame);
+        height = CalcParabolicDisplacement(BOUNCE_FACTOR * LAUNCH_SPEED, GRAVITY, sinceLanding);
+        m_launchPitch = m_launchPitch - BOUNCE_PITCH / (BOUNCE_FACTOR * m_landFrame);
+    }
+
+    const EGG::Vector3f &railPos = m_railInterpolator->curPos();
+    if (railPos.y <= m_launchBaseY + height || m_launchTimer < MIN_AIR_FRAMES || m_landed) {
+        if (m_launchBaseY + height < railPos.y &&
+                1.0f + m_landFrame < static_cast<f32>(m_launchTimer) && m_landed) {
+            m_launchTimer = -1;
+            enableCollision();
+            calcTransform();
+            m_currUp = transform().base(1);
+            return;
+        }
+    } else {
+        m_launchBaseY = railPos.y;
+        m_landed = true;
+        m_landFrame = static_cast<f32>(m_launchTimer);
+    }
+
+    EGG::Vector3f carPos(railPos.x, m_launchBaseY + height, railPos.z);
+    setPos(carPos);
+
+    EGG::Matrix34f mat = OrthonormalBasis(m_currTangent);
+    EGG::Matrix34f pitch;
+    pitch.makeRT(EGG::Vector3f(m_launchPitch * DEG2RAD, 0.0f, 0.0f), EGG::Vector3f::zero);
+    mat = mat.multiplyTo(pitch);
+    mat.setBase(3, carPos);
+    setTransform(mat);
+
+    ++m_launchTimer;
 }
 
 /// @addr{0x806B84FC}

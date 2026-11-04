@@ -1,5 +1,9 @@
 #include "ObjectHanachan.hh"
 
+#include "game/field/CollisionDirector.hh"
+
+#include "game/item/ItemObj.hh"
+
 #include "game/field/ObjectDirector.hh"
 
 namespace Kinoko::Field {
@@ -101,6 +105,105 @@ void ObjectHanachanBody::calcCollisionTransform() {
 
     m_collision->transform(trans, scale(), posDelta);
     m_lastPos = pos();
+}
+
+/// @addr{0x806C6C10}
+/// @brief A part's own update: the hop after a hit. The colour fades (+0xD8, +0xDC) and the wobble
+/// counter (+0xB4) are visual.
+void ObjectHanachanPart::calc() {
+    m_justLanded = false;
+
+    if (m_hopTimer != -1) {
+        calcHop();
+    }
+}
+
+/// @addr{0x806C6C94}
+/// @brief A kart in a star, mega mushroom or bullet bill makes the part hop (the rumble is left
+/// out). Any other touch only wobbles the drawn part (+0xB0). Two flags that would turn the
+/// reaction into WallSpark (+0xE0 with status bits 64 or 65, +0xE1) are never set in the game's
+/// code (+0xE0 has only a vtable setter, 0x806C6C08, with no caller).
+Kart::Reaction ObjectHanachanPart::onCollision(Kart::KartObject * /*kartObj*/,
+        Kart::Reaction reactionOnKart, Kart::Reaction reactionOnObj,
+        EGG::Vector3f & /*hitDepth*/) {
+    if (!m_inHitWave &&
+            (reactionOnObj == Kart::Reaction::UNK_3 || reactionOnObj == Kart::Reaction::UNK_5) &&
+            m_hopTimer == -1) {
+        startHop();
+    }
+
+    return reactionOnKart;
+}
+
+/// @addr{0x806C6E40}
+/// @brief Items other than bob-ombs make the part hop.
+s32 ObjectHanachanPart::onItemCollision(Item::ItemObj *item, s32 reactionOnItem,
+        s32 reactionOnObj, EGG::Vector3f & /*hitDepth*/) {
+    bool bobOmb = item && item->kind() == Item::ItemObjKind::BobOmb;
+    if (!m_inHitWave && !bobOmb && reactionOnObj >= ItemHit::ObjHit &&
+            reactionOnObj <= ItemHit::ObjHitHardRaceOnly && m_hopTimer == -1) {
+        startHop();
+    }
+
+    return reactionOnItem;
+}
+
+/// @addr{0x806C723C}
+/// @brief The part loses its collision until its hop is over.
+void ObjectHanachanPart::startHop() {
+    constexpr f32 HOP_SPEED = 70.0f;
+    constexpr f32 GRAVITY = 3.0f;
+
+    disableCollision();
+    m_hopTimer = 0;
+    m_landFrame = static_cast<u32>((2.0f * HOP_SPEED) / GRAVITY);
+    m_landed = false;
+}
+
+/// @addr{0x806C72B8}
+/// @brief The drawn part hops 70 up (3 per frame per frame down), lands (a 10 sphere at the hop
+/// height touches the course, from the sixth frame), hops again at half the speed and gets its
+/// collision back at the second landing. Only the drawn part moves. The smoke and sound are left
+/// out.
+void ObjectHanachanPart::calcHop() {
+    constexpr f32 HOP_SPEED = 70.0f;
+    constexpr f32 GRAVITY = 3.0f;
+    constexpr f32 RADIUS = 10.0f;
+    constexpr s32 MIN_FRAMES = 5;
+
+    s32 t = ++m_hopTimer;
+    f32 height;
+    if (!m_landed) {
+        height = CalcParabolicDisplacement(HOP_SPEED, GRAVITY, t);
+    } else {
+        height = CalcParabolicDisplacement(0.5f * HOP_SPEED, GRAVITY, t - m_landFrame);
+    }
+
+    EGG::Vector3f hopPos = pos() + EGG::Vector3f(0.0f, height, 0.0f);
+    auto *colDir = CollisionDirector::Instance();
+
+    CollisionInfo info;
+    bool touching = colDir->checkSphereFull(RADIUS, hopPos, EGG::Vector3f::inf, KCL_TYPE_64EBDFFF,
+            &info, nullptr, 0);
+
+    if (touching && t > MIN_FRAMES && !m_landed) {
+        m_landed = true;
+        m_landFrame = static_cast<u32>(t);
+    } else {
+        CollisionInfoPartial partialInfo;
+        bool touchingAgain = colDir->checkSpherePartial(RADIUS, hopPos, EGG::Vector3f::inf,
+                KCL_TYPE_64EBDFFF, &partialInfo, nullptr, 0);
+        if (touchingAgain && m_landFrame + 5 < static_cast<u32>(t) && m_landed) {
+            m_hopTimer = -1;
+            enableCollision();
+            m_hopHeight = 0.0f;
+            m_justLanded = true;
+            m_landed = false;
+            return;
+        }
+    }
+
+    m_hopHeight = height;
 }
 
 /// @addr{0x806C8A5C}
@@ -329,6 +432,59 @@ ObjectHanachan::RailAlignment ObjectHanachan::calcRailAlignment() const {
 
     return right.cross(railTan) < 0.0f ? RailAlignment::MisalignedLeft :
                                          RailAlignment::MisalignedRight;
+}
+
+/// @addr{0x806CBBC4}
+/// @brief The first frame a part hops, every part joins the wave: every 4 frames the next part on
+/// each side of it hops too, until the end part furthest from it has landed. The sound is left out.
+void ObjectHanachan::calcHitWave() {
+    constexpr s32 WAVE_STEP = 4;
+
+    u8 count = static_cast<u8>(m_parts.size());
+    for (u8 i = 0; i < count; ++i) {
+        if (m_parts[i]->m_hopTimer == 1 && m_hitWaveTimer == -1) {
+            m_hitWaveTimer = 0;
+            m_hitWaveCenter = i;
+            m_hitWaveFarPart = (count >> 1) < i ? 0 : count - 1;
+            break;
+        }
+    }
+
+    if (m_hitWaveTimer == 0) {
+        for (auto *part : m_parts) {
+            part->m_inHitWave = true;
+        }
+    }
+
+    if (m_hitWaveTimer < 0) {
+        return;
+    }
+
+    s32 step = m_hitWaveTimer / WAVE_STEP;
+    if (m_hitWaveTimer == step * WAVE_STEP) {
+        s32 before = static_cast<s32>(m_hitWaveCenter) - step;
+        if (before >= 0 && m_parts[before]->m_hopTimer < 0) {
+            m_parts[before]->startHop();
+        }
+
+        s32 after = static_cast<s32>(m_hitWaveCenter) + step;
+        if (after < static_cast<s32>(count) && m_parts[after]->m_hopTimer < 0) {
+            m_parts[after]->startHop();
+        }
+    }
+
+    if (m_parts[m_hitWaveFarPart]->m_justLanded) {
+        m_hitWaveTimer = -1;
+        m_hitWaveCenter = 0;
+        m_hitWaveFarPart = 0;
+        for (auto *part : m_parts) {
+            part->m_inHitWave = false;
+        }
+    }
+
+    if (m_hitWaveTimer != -1) {
+        ++m_hitWaveTimer;
+    }
 }
 
 } // namespace Kinoko::Field

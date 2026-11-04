@@ -50,13 +50,17 @@ public:
         m_highwayMgr = highwayMgr;
     }
 
+    s32 onItemCollision(Item::ItemObj *item, s32 reactionOnItem, s32 reactionOnObj,
+            EGG::Vector3f &hitDepth) override;
+
     /// @addr{0x806D9A04}
     void reset() {
-        m_squashed = false;
+        m_squashed.fill(false);
     }
 
-    [[nodiscard]] bool squashed() const {
-        return m_squashed;
+    /// @brief This frame the car hit the player (+0x1B1, one per player).
+    [[nodiscard]] bool squashed(size_t playerIdx) const {
+        return m_squashed[playerIdx];
     }
 
 private:
@@ -68,6 +72,8 @@ private:
     void calcState2();
 
     void calcPos();
+    void startLaunch();
+    void calcLaunch();
 
     const ObjectHighwayManager *m_highwayMgr;
     ObjectCollisionBase *m_auxCollision;
@@ -81,7 +87,15 @@ private:
     f32 m_currSpeed;
     EGG::Vector3f m_up;
     EGG::Vector3f m_tangent;
-    bool m_squashed;
+    std::array<bool, 12> m_squashed;
+    bool m_launched;        ///< +0x1BD Knocked into the air by an item or a special kart.
+    u32 m_launchTimer;      ///< +0x1C0
+    f32 m_launchBaseY;      ///< +0x1C4
+    f32 m_launchRollRate;   ///< +0x204 Degrees per frame on the way up.
+    f32 m_landFrame;        ///< +0x208 Launch frame of the first landing (200/3 before it).
+    bool m_landed;          ///< +0x220 Bounced once.
+    bool m_landedAgain;     ///< +0x221
+    bool m_bouncedOnLeft;   ///< +0x230 The first bounce was on the left corner: the roll reverses.
     bool m_hasAuxCollision;
     f32 m_hitAngle;
 

@@ -54,6 +54,10 @@ public:
         return m_hitTableKart;
     }
 
+    [[nodiscard]] const ObjectHitTable &hitTableKartObject() const {
+        return m_hitTableKartObject;
+    }
+
     [[nodiscard]] const ObjectCollidable *collidingObject(size_t idx) const {
         ASSERT(idx < m_collidingObjects.size());
         return m_collidingObjects[idx];
@@ -106,6 +110,7 @@ public:
     }
 
     [[nodiscard]] System::Random &random() const;
+    [[nodiscard]] static s16 KartHitColumn(const Kart::KartObject *kartObj);
     [[nodiscard]] f32 distAboveRisingWater(f32 offset) const;
     [[nodiscard]] f32 risingWaterKillPlaneHeight() const;
 

@@ -31,6 +31,20 @@ public:
     void calcCollisionTransform() override;
     Kart::Reaction onCollision(Kart::KartObject *kartObj, Kart::Reaction reactionOnKart,
             Kart::Reaction reactionOnObj, EGG::Vector3f &hitDepth) override;
+    s32 onItemCollision(Item::ItemObj *item, s32 reactionOnItem, s32 reactionOnObj,
+            EGG::Vector3f &hitDepth) override;
+
+    /// @addr{0x807642F8}
+    /// @brief vtable +0x108: a hit. The base (and the side-moving and Dossunc Thwomps) start a
+    /// movement state +0x124 = 2 that Kinoko does not have; only the stationary and the patrolling
+    /// Thwomps spin (overrides).
+    virtual void startSpin() {}
+
+    /// @brief vtable +0xF8: the stomp's update while spinning (anm state 5).
+    virtual void calcSpinState() {}
+
+    /// @brief vtable +0xFC: one frame of the spin.
+    virtual void calcSpin() {}
 
     void initState();
     void calcStomp();
@@ -57,7 +71,11 @@ protected:
         Falling = 2,    ///< Slamming down
         Grounded = 3,   ///< Contacting the floor
         Rising = 4,     ///< Resetting
+        Spinning = 5,   ///< Hit by an item or a kart in a star, mega mushroom or bullet bill.
     };
+
+    void calcSpinRotation(bool canStop);
+    void calcRiseWhileSpinning();
 
     enum class StompState {
         Inactive = 0,
@@ -76,6 +94,8 @@ protected:
     s32 m_cycleTimer;
     f32 m_currRot;
     bool m_touchingGround;
+    f32 m_spinSpeed = 0.0f; ///< +0xF8 Degrees per frame, from 60 down to 12.
+    bool m_spinning = false; ///< +0x100
 
     /// The total number of frames the thwomp rises before crashing down
     static constexpr u32 BEFORE_FALL_DURATION = 10;

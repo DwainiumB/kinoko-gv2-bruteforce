@@ -15,9 +15,14 @@ public:
 
     Kart::Reaction onCollision(Kart::KartObject *kartObj, Kart::Reaction reactionOnKart,
             Kart::Reaction reactionOnObj, EGG::Vector3f &hitDepth) override;
+    s32 onItemCollision(Item::ItemObj *item, s32 reactionOnItem, s32 reactionOnObj,
+            EGG::Vector3f &hitDepth) override;
 
 protected:
     virtual void calcFloor();
+
+    void startHit();
+    void calcHit();
 
     void setup();
     void calcPos();
@@ -41,6 +46,8 @@ protected:
     EGG::Vector3f m_targetDir;
     EGG::Vector3f m_upForce; ///< Used by calcPos to counteract gravity
     f32 m_interpRate;
+    s32 m_hitTimer;  ///< +0x120 Frames since a hit made the cow jump, -1 when not hit.
+    f32 m_hitHeight; ///< +0x124 How high the model jumps (the cow itself stays on the ground).
 
     static constexpr EGG::Vector3f GRAVITY_FORCE = EGG::Vector3f(0.0f, 2.0f, 0.0f);
 };

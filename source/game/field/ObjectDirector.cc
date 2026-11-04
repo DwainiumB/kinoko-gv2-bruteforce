@@ -68,6 +68,12 @@ void ObjectDirector::addManagedObject(ObjectCollidable *obj) {
 }
 
 /// @addr{0x8082AB04}
+/// @brief Collects the course objects a kart's convex hull touches, with what each hit does to the
+/// kart (read back with reaction) after the object's own reactions.
+/// @details The kart and object tables are read in the column of the kart's state (star, mega
+/// mushroom, bullet bill or none). The game skips objects whose vtable +0xD8 is false while status
+/// bit 88 is set; nothing in Kinoko sets that bit (its role is not identified), so that skip is left
+/// out. It also sets a byte at object +0xA8, which only the default onObjectCollision effect reads.
 size_t ObjectDirector::checkKartObjectCollision(Kart::KartObject *kartObj,
         ObjectCollisionConvexHull *convexHull) {
     size_t count = 0;
@@ -84,10 +90,11 @@ size_t ObjectDirector::checkKartObjectCollision(Kart::KartObject *kartObj,
         }
 
         // We have a collision, process it
-        // Assume that we are not in a star, mega, or bullet
-        Kart::Reaction reactionOnKart = m_hitTableKart.reaction(m_hitTableKart.slot(obj->id()));
+        s16 column = KartHitColumn(kartObj);
+        Kart::Reaction reactionOnKart =
+                m_hitTableKart.kartReaction(m_hitTableKart.slot(obj->id()), column);
         Kart::Reaction reactionOnObj =
-                m_hitTableKartObject.reaction(m_hitTableKartObject.slot(obj->id()));
+                m_hitTableKartObject.kartReaction(m_hitTableKartObject.slot(obj->id()), column);
 
         // The object might change the reaction states
         obj->processKartReactions(kartObj, reactionOnKart, reactionOnObj);
@@ -96,10 +103,13 @@ size_t ObjectDirector::checkKartObjectCollision(Kart::KartObject *kartObj,
                 obj->onCollision(kartObj, reactionOnKart, reactionOnObj, m_hitDepths[count]);
         m_reactions[count] = reaction;
 
-        if (reaction == Kart::Reaction::WallAllSpeed || reaction == Kart::Reaction::WallSpark) {
-            obj->onWallCollision(kartObj, m_hitDepths[count]);
-        } else {
-            obj->onObjectCollision(kartObj);
+        // A kart in an action (status bit 32) does not call the object's wall or hit callback.
+        if (!kartObj->status().onBit(Kart::eStatus::InAction)) {
+            if (reaction == Kart::Reaction::WallAllSpeed || reaction == Kart::Reaction::WallSpark) {
+                obj->onWallCollision(kartObj, m_hitDepths[count]);
+            } else {
+                obj->onObjectCollision(kartObj);
+            }
         }
 
         m_collidingObjects[count] = obj;
@@ -111,6 +121,22 @@ size_t ObjectDirector::checkKartObjectCollision(Kart::KartObject *kartObj,
     }
 
     return count;
+}
+
+/// @addr{0x8082B4E0}
+/// @brief The kart hit tables' column for a kart: 1 in a star (status bit 63), 2 in a mega
+/// mushroom (79), 3 as a bullet bill (91), else 0.
+s16 ObjectDirector::KartHitColumn(const Kart::KartObject *kartObj) {
+    const auto &status = kartObj->status();
+    if (status.onBit(Kart::eStatus::InStar)) {
+        return 1;
+    }
+
+    if (status.onBit(Kart::eStatus::InMega)) {
+        return 2;
+    }
+
+    return status.onBit(Kart::eStatus::InBullet) ? 3 : 0;
 }
 
 /// @addr{0x8082ADBC}

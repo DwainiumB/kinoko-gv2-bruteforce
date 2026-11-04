@@ -31,11 +31,10 @@ public:
     /// @addr{0x806EC7A8}
     void loadRail() override {}
 
-    /// @addr{0x806E9CAC}
     Kart::Reaction onCollision(Kart::KartObject *kartObj, Kart::Reaction reactionOnKart,
-            Kart::Reaction /*reactionOnObj*/, EGG::Vector3f & /*hitDepth*/) override {
-        return kartObj->speedRatioCapped() < 0.5f ? Kart::Reaction::WallAllSpeed : reactionOnKart;
-    }
+            Kart::Reaction reactionOnObj, EGG::Vector3f &hitDepth) override;
+    s32 onItemCollision(Item::ItemObj *item, s32 reactionOnItem, s32 reactionOnObj,
+            EGG::Vector3f &hitDepth) override;
 
 private:
     /// @addr{0x806E9E04}
@@ -54,6 +53,9 @@ private:
     /// @addr{0x806E9FE4}
     void calcState1() {}
 
+    void enterStateHit();
+    void calcStateHit();
+
     void checkFloorCollision();
     void calcUp();
 
@@ -67,13 +69,18 @@ private:
     bool m_touchingGround;
     f32 m_initJumpVel;
     f32 m_targetY;
+    s32 m_hitLandFrame;  ///< +0x404 The hit state's frame it landed on, -1 before.
+    f32 m_hitJumpSpeed;  ///< +0x410
+    u32 m_floorVariant;  ///< +0x49C KCL variant of the floor last touched.
 
     static constexpr f32 DIAMETER = 400.0f;
     static constexpr EGG::Vector3f GRAVITY = EGG::Vector3f(0.0f, 2.5f, 0.0f);
 
-    static constexpr std::array<StateManagerEntry, 2> STATE_ENTRIES = {{
+    static constexpr std::array<StateManagerEntry, 3> STATE_ENTRIES = {{
             {StateEntry<ObjectHwanwan, &ObjectHwanwan::enterState0, &ObjectHwanwan::calcState0>(0)},
             {StateEntry<ObjectHwanwan, &ObjectHwanwan::enterState1, &ObjectHwanwan::calcState1>(1)},
+            {StateEntry<ObjectHwanwan, &ObjectHwanwan::enterStateHit,
+                    &ObjectHwanwan::calcStateHit>(2)},
     }};
 };
 

@@ -20,9 +20,67 @@ ObjectCow::ObjectCow(const System::MapdataGeoObj &params) : ObjectCollidable(par
 ObjectCow::~ObjectCow() = default;
 
 /// @addr{0x806BC2AC}
+/// @brief A slow kart bounces off; a kart in a star, mega mushroom or bullet bill makes the cow
+/// jump (the rumble is left out).
 Kart::Reaction ObjectCow::onCollision(Kart::KartObject *kartObj, Kart::Reaction reactionOnKart,
-        Kart::Reaction /*reactionOnObj*/, EGG::Vector3f & /*hitDepth*/) {
-    return kartObj->speedRatioCapped() < 0.5f ? Kart::Reaction::WallAllSpeed : reactionOnKart;
+        Kart::Reaction reactionOnObj, EGG::Vector3f & /*hitDepth*/) {
+    if (reactionOnObj == Kart::Reaction::None) {
+        if (kartObj->speedRatioCapped() < 0.5f) {
+            return Kart::Reaction::WallAllSpeed;
+        }
+    } else if ((reactionOnObj == Kart::Reaction::UNK_3 ||
+                       reactionOnObj == Kart::Reaction::UNK_5) &&
+            m_hitTimer == -1) {
+        startHit();
+    }
+
+    return reactionOnKart;
+}
+
+/// @addr{0x806BC3F0}
+s32 ObjectCow::onItemCollision(Item::ItemObj * /*item*/, s32 reactionOnItem, s32 reactionOnObj,
+        EGG::Vector3f & /*hitDepth*/) {
+    if (reactionOnObj >= ItemHit::ObjHit && reactionOnObj <= ItemHit::ObjHitHardRaceOnly &&
+            m_hitTimer == -1) {
+        startHit();
+    }
+
+    return reactionOnItem;
+}
+
+/// @addr{0x806BCB28}
+/// @brief The cow loses its collision until its jump lands (the animation and sound are left out).
+void ObjectCow::startHit() {
+    m_hitTimer = 0;
+    m_hitHeight = 0.0f;
+    disableCollision();
+}
+
+/// @addr{0x806BCBA4}
+/// @brief The model jumps 45 up (falling 3 per frame per frame); from the sixth frame on, the
+/// collision comes back once a 50 sphere 50 above the model touches the course. The jump only
+/// moves the drawn model (0x806BC5C0), not the cow.
+void ObjectCow::calcHit() {
+    constexpr f32 JUMP_SPEED = 45.0f;
+    constexpr f32 JUMP_GRAVITY = 3.0f;
+    constexpr f32 RADIUS = 50.0f;
+    constexpr s32 MIN_FRAMES = 5;
+
+    f32 height = CalcParabolicDisplacement(JUMP_SPEED, JUMP_GRAVITY, m_hitTimer);
+    m_hitHeight = height;
+    EGG::Vector3f modelPos = pos() + EGG::Vector3f::ey * height;
+
+    if (m_hitTimer <= MIN_FRAMES) {
+        return;
+    }
+
+    CollisionInfoPartial info;
+    if (CollisionDirector::Instance()->checkSpherePartial(RADIUS,
+                modelPos + EGG::Vector3f(0.0f, RADIUS, 0.0f), EGG::Vector3f::inf,
+                KCL_TYPE_64EBDFFF, &info, nullptr, 0)) {
+        m_hitTimer = -1;
+        enableCollision();
+    }
 }
 
 /// @addr{0x806BBF64}
@@ -42,6 +100,8 @@ void ObjectCow::setup() {
     m_targetDir = EGG::Vector3f::ez;
     m_upForce = EGG::Vector3f::zero;
     m_interpRate = 0.05f;
+    m_hitTimer = -1;
+    m_hitHeight = 0.0f;
 }
 
 /// @addr{0x806BC87C}
@@ -150,6 +210,11 @@ void ObjectCowLeader::calc() {
     }
 
     setMatrixTangentTo(m_up, m_tangent);
+
+    if (m_hitTimer != -1) {
+        ++m_hitTimer;
+        calcHit();
+    }
 }
 
 /// @addr{0x806BDCD8}
@@ -311,6 +376,11 @@ void ObjectCowFollower::calc() {
     }
 
     setMatrixTangentTo(m_up, m_tangent);
+
+    if (m_hitTimer != -1) {
+        ++m_hitTimer;
+        calcHit();
+    }
 }
 
 /// @addr{0x806BE4E8}

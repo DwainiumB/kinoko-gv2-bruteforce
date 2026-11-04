@@ -1,5 +1,7 @@
 #include "ObjectHighwayManager.hh"
 
+#include "game/system/RaceConfig.hh"
+
 #include "game/field/ObjectDirector.hh"
 #include "game/field/obj/ObjectCarTGE.hh"
 
@@ -39,7 +41,8 @@ ObjectHighwayManager::~ObjectHighwayManager() = default;
 
 /// @addr{0x806D332C}
 void ObjectHighwayManager::init() {
-    m_squashTimer = SQUASH_MAX;
+    m_playerCount = System::RaceConfig::Instance()->raceScenario().playerCount;
+    m_squashTimers.fill(SQUASH_MAX);
 }
 
 /// @addr{0x806D345C}
@@ -48,20 +51,26 @@ void ObjectHighwayManager::calc() {
 }
 
 /// @addr{0x806D50AC}
+/// @details The manager's other per-frame work (bomb car blasts launching nearby cars, 0x806D52E0,
+/// and the visual car effects) is not ported: Kinoko has no bomb cars.
 void ObjectHighwayManager::calcSquash() {
     constexpr u32 SQUASH_INVULNERABILITY = 200;
 
-    bool vulnerable = m_squashTimer >= SQUASH_INVULNERABILITY;
+    for (size_t i = 0; i < m_playerCount; ++i) {
+        for (auto *&obj : m_cars) {
+            if (obj->squashed(i) && m_squashTimers[i] >= SQUASH_INVULNERABILITY) {
+                m_squashTimers[i] = 0;
+            }
+        }
+    }
 
     for (auto *&obj : m_cars) {
-        if (obj->squashed() && vulnerable) {
-            m_squashTimer = 0;
-        }
-
         obj->reset();
     }
 
-    m_squashTimer = std::min<u32>(m_squashTimer + 1, SQUASH_MAX);
+    for (size_t i = 0; i < m_playerCount; ++i) {
+        m_squashTimers[i] = std::min<u32>(m_squashTimers[i] + 1, SQUASH_MAX);
+    }
 }
 
 } // namespace Kinoko::Field

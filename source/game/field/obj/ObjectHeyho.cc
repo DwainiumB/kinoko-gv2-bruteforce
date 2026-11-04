@@ -3,6 +3,8 @@
 #include "game/field/CollisionDirector.hh"
 #include "game/field/RailManager.hh"
 
+#include "game/kart/KartCollide.hh"
+
 namespace Kinoko::Field {
 
 /// @addr{0x806CE828}
@@ -43,6 +45,7 @@ void ObjectHeyho::init() {
     m_forward = EGG::Vector3f::ez;
     m_freeFall = false;
     m_spinFrame = 0;
+    m_hitSpinning = false;
 
     changeAnimation(Animation::Move);
 }
@@ -52,7 +55,90 @@ void ObjectHeyho::calc() {
     calcStateTransition();
     calcMotion();
     StateManager::calc();
+
+    if (m_hitSpinning) {
+        calcSpin();
+    }
+
     calcInterp();
+
+    // A flag at +0x146 (the Shy Guy has dropped 300 below a rail end) is set here; nothing that
+    // moves anything reads it.
+}
+
+/// @addr{0x806CF024}
+/// @brief A kart in a star, mega mushroom or bullet bill spins the Shy Guy round (the rumble is
+/// left out).
+Kart::Reaction ObjectHeyho::onCollision(Kart::KartObject * /*kartObj*/,
+        Kart::Reaction reactionOnKart, Kart::Reaction reactionOnObj,
+        EGG::Vector3f & /*hitDepth*/) {
+    if ((reactionOnObj == Kart::Reaction::UNK_3 || reactionOnObj == Kart::Reaction::UNK_5) &&
+            !m_hitSpinning) {
+        startSpin();
+    }
+
+    return reactionOnKart;
+}
+
+/// @addr{0x806CF198}
+s32 ObjectHeyho::onItemCollision(Item::ItemObj * /*item*/, s32 reactionOnItem, s32 reactionOnObj,
+        EGG::Vector3f & /*hitDepth*/) {
+    if (reactionOnObj >= ItemHit::ObjHit && reactionOnObj <= ItemHit::ObjHitHardRaceOnly &&
+            !m_hitSpinning) {
+        startSpin();
+    }
+
+    return reactionOnItem;
+}
+
+/// @addr{0x806CFAC0}
+void ObjectHeyho::startSpin() {
+    constexpr f32 SPIN_SPEED = 40.0f;
+    constexpr s32 SLOWING_FRAMES = 120;
+
+    m_hitSpinning = true;
+    m_hitSpinFrame = 0;
+    m_hitSpinDecel = (0.8f * SPIN_SPEED) / static_cast<f32>(SLOWING_FRAMES);
+}
+
+/// @addr{0x806CFB38}
+/// @brief Turns the facing about the up axis: 40 degrees per frame slowing to 8 over 120 frames,
+/// then 4 degrees per frame faster each frame (the facing is not written back then, except while
+/// jumping off the floor) until it is within 0.97 of the facing again. The sound is left out.
+void ObjectHeyho::calcSpin() {
+    constexpr f32 SPIN_SPEED = 40.0f;
+    constexpr u32 SLOWING_FRAMES = 120;
+    constexpr f32 END_DOT = 0.97f;
+
+    EGG::Vector3f dir = m_forward;
+    u32 t = m_hitSpinFrame;
+
+    // 0x806B3AC4: turn `dir` about `m_up`.
+    auto turn = [this](f32 degrees, const EGG::Vector3f &v) {
+        EGG::Matrix34f m;
+        m.setAxisRotation(-degrees * DEG2RAD, m_up);
+        m.setBase(3, EGG::Vector3f::zero);
+        return m.multVector(v);
+    };
+
+    if (static_cast<s32>(t) < static_cast<s32>(SLOWING_FRAMES)) {
+        f32 frame = static_cast<f32>(t);
+        f32 angle = SPIN_SPEED * frame - frame * 0.5f * m_hitSpinDecel * frame;
+        dir = turn(angle, dir);
+        m_forward = dir;
+        m_hitSpinAngle = angle;
+    } else {
+        f32 angle = m_hitSpinAngle +
+                0.1f * SPIN_SPEED * static_cast<f32>(static_cast<s32>(t - SLOWING_FRAMES));
+        dir = turn(angle, dir);
+        if (!m_floorCollision && m_currentStateId == 1) {
+            m_forward = dir;
+        } else if (END_DOT < dir.z * m_forward.z + dir.x * m_forward.x + 0.0f * 0.0f) {
+            m_hitSpinning = false;
+        }
+    }
+
+    ++m_hitSpinFrame;
 }
 
 /// @addr{0x806D013C}

@@ -28,15 +28,17 @@ public:
     /// @addr{0x806D5C64}
     void loadRail() override {}
 
-    [[nodiscard]] u32 squashTimer() const {
-        return m_squashTimer;
+    /// @brief Frames since a car last squashed this player (+0x120, one per player, up to 600).
+    [[nodiscard]] u32 squashTimer(size_t playerIdx) const {
+        return m_squashTimers[playerIdx];
     }
 
 private:
     void calcSquash();
 
     owning_span<ObjectCarTGE *> m_cars;
-    u32 m_squashTimer; ///< Normally an array, one for each player.
+    std::array<u32, 12> m_squashTimers; ///< +0x120
+    size_t m_playerCount;               ///< +0x100
 
     static constexpr u32 SQUASH_MAX = 600;
 };

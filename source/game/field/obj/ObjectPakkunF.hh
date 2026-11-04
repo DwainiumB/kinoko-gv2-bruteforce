@@ -21,6 +21,10 @@ public:
 
     void loadAnims() override;
     void calcCollisionTransform() override;
+    Kart::Reaction onCollision(Kart::KartObject *kartObj, Kart::Reaction reactionOnKart,
+            Kart::Reaction reactionOnObj, EGG::Vector3f &hitDepth) override;
+    s32 onItemCollision(Item::ItemObj *item, s32 reactionOnItem, s32 reactionOnObj,
+            EGG::Vector3f &hitDepth) override;
 
     /// @addr{0x80775458}
     [[nodiscard]] f32 getCollisionRadius() const override {
@@ -31,11 +35,14 @@ private:
     enum class State {
         Wait = 0,
         Attack = 1,
+        Damage = 2, ///< Hit by an item or a kart in a star, mega mushroom or bullet bill.
     };
 
     void calcWait();
     void calcAttack();
     void enterAttack();
+    void startDamage();
+    void calcDamage();
 
     State m_state;
     s32 m_waitFrames;      ///< How long until the piranha starts chomping

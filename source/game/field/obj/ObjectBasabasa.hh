@@ -30,6 +30,8 @@ public:
 
     Kart::Reaction onCollision(Kart::KartObject *kartObj, Kart::Reaction reactionOnKart,
             Kart::Reaction reactionOnObj, EGG::Vector3f &hitDepth) override;
+    s32 onItemCollision(Item::ItemObj *item, s32 reactionOnItem, s32 reactionOnObj,
+            EGG::Vector3f &hitDepth) override;
 
     void setActive(bool isSet) {
         m_active = isSet;
@@ -49,25 +51,25 @@ private:
     /// @addr{0x806B5C80}
     void enterState0() {}
 
-    /// @addr{0x806B6288}
-    /// @brief This is run when a bat is hit with a start or other item. We can ignore for Kinoko.
-    void enterState1() {}
+    void enterStateHit();
 
     void calcState0();
-
-    /// @addr{0x806B652C}
-    /// @brief This is run when a bat is hit with a start or other item. We can ignore for Kinoko.
-    void calcState1() {}
+    void calcStateHit();
+    void startHit(const EGG::Vector3f &hitPos, const EGG::Vector3f &hitVel);
 
     const bool m_bigBump;       ///< Affects the severity of the "push" when colliding with bat
     EGG::Vector3f m_initialPos; ///< RNG-based starting position for the bat
     bool m_active;              ///< Whether or not this bat is currently spawned
+    EGG::Vector3f m_flyVel;     ///< +0xF4 Velocity after a hit.
+    f32 m_flySpeed;             ///< +0x100
+    EGG::Vector3f m_hitPos;     ///< +0x11C Where the hitter was (read but its result unused).
+    EGG::Vector3f m_hitVel;     ///< +0x128 The hitter's velocity: the bat flies off along it.
 
     static constexpr std::array<StateManagerEntry, 2> STATE_ENTRIES = {{
             {StateEntry<ObjectBasabasaDummy, &ObjectBasabasaDummy::enterState0,
                     &ObjectBasabasaDummy::calcState0>(0)},
-            {StateEntry<ObjectBasabasaDummy, &ObjectBasabasaDummy::enterState1,
-                    &ObjectBasabasaDummy::calcState1>(1)},
+            {StateEntry<ObjectBasabasaDummy, &ObjectBasabasaDummy::enterStateHit,
+                    &ObjectBasabasaDummy::calcStateHit>(1)},
     }};
 };
 

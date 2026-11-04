@@ -35,6 +35,36 @@ void ObjectDossunNormal::calc() {
     default:
         break;
     }
+
+    if (m_spinning) {
+        calcSpin();
+    }
+}
+
+/// @addr{0x80760AD4}
+s32 ObjectDossunNormal::onItemCollision(Item::ItemObj * /*item*/, s32 reactionOnItem,
+        s32 reactionOnObj, EGG::Vector3f & /*hitDepth*/) {
+    if (reactionOnObj == ItemHit::ObjHit || reactionOnObj == ItemHit::ObjHitRaceOnly) {
+        startSpin();
+    }
+
+    return reactionOnItem;
+}
+
+/// @addr{0x80760A44}
+/// @brief Spins for at least 60 frames (the animation is left out).
+void ObjectDossunNormal::startSpin() {
+    constexpr f32 SPIN_SPEED = 60.0f;
+    constexpr s32 SPIN_FRAMES = 60;
+
+    if (m_spinning) {
+        return;
+    }
+
+    m_anmState = AnmState::Spinning;
+    m_spinSpeed = SPIN_SPEED;
+    m_spinning = true;
+    m_spinFrames = SPIN_FRAMES;
 }
 
 /// @addr{0x80760820}
