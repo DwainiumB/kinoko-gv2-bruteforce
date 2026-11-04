@@ -770,7 +770,8 @@ is operation order; the formulas were right.
 //     item-item 0x807A1C94, then 0x807A1ED8;
 //   landed and kind 9 (bob-omb): search with mask 0xC (objects only), then 0x807A1ED8.
 // ItemTrail 0x80791CC8, per held item that has a unit (last to first): search 0xE, 0x807A1C94, 0x807A1ED8.
-// Explosions (0x807A3648, bob-omb / blue shell blast vs items) also call the director search: not ported.
+// Explosions (0x807A3648) also call the director search: these are course objects' blasts, not the
+//   bob-omb's or blue shell's (fifteenth pass).
 
 // ItemObj::calcObjectCollision 0x807A1ED8 (item = this):
 //   if (!boxColUnit) return;
@@ -1036,3 +1037,38 @@ courses (Mushroom Gorge, Moo Moo Meadows, Maple Treeway, Coconut Mall, DK Summit
 Land, GCN Mario Circuit, Dry Dry Ruins, Mario Circuit, Grumble Volcano): no crash; Goombas lose their collision and
 get it back after about 630 frames, cows after their jump (under 30 frames), Wiggler parts after about 80, cars fly
 about 1350 up and land, Thwomps and penguins spin.
+
+## Blasts of course objects (fifteenth pass, 2026-11-04)
+
+```c
+// 0x807A3648 is not the bob-omb or blue shell blast. Its only caller is the thunk 0x8079A654
+//   (r3 = ItemDirector + 0x2A4, then b 0x807A3648), called by exploding course objects:
+//   ObjectKoopaBall calcExploding 0x80771324 (Bowser's fireballs): while timer > 20 after its decrement,
+//     radius 870 * 2 (0x808A3EA4 * 0x808CF3F4), pos +0x30, kind 9;
+//   ObjectHeyhoBall calcExploding 0x806D0F24 (the Shy Guy ship's cannonballs): every frame before the end of
+//     the blast, radius 1500 (0x808C4BB8), kind 9;
+//   CarTGE bomb cars 0x806D8B5C (kind 9; not in Kinoko);
+//   Hanachan 0x806CC934, behind the manager's vt +0x104, which is 0x806C9BB8 (returns 0) in the only vtable: dead.
+// Bob-omb and blue shell blasts reach course objects through the item's own pass (0x8079EFEC: landed bob-ombs
+//   search with mask 0xC, others 0xE, then 0x807A1ED8 with the grown hit radius), ported in the eleventh pass.
+//
+// The stand-in item at ItemDirector +0x2A4: built by the ItemObj constructor 0x8079D8BC, then 0x807A3618:
+//   +0x74 = 0, +0x78 = 0, +0xB0 = null (no box unit), +0x7C = 0x40 (so 0x8079FF14 "vanishes on hit" is false),
+//   vel +0x50 = zero. Owner +0x6C stays 0, so a wooden box it breaks credits player 0.
+// ItemDirector::explodeAt 0x807A3648 (radius f1, stand-in r3, pos r4, kind r5):
+//   stand-in kind +0x04 = kind, pos +0x44 = pos, hit radius +0xB8 = radius;
+//   BoxColManager search 0x80786B14 (pos, radius, mask 0xE);
+//   while (item = getNextItem 0x80785DF4):
+//     if (PSVECSquareDistance(stand-in pos, item pos) < (radius + item hit radius)^2)
+//       calcItemPairResponse 0x807A18FC(item, kind 9 or 5 ? 2 : table 0x808A4DFC [item kind][kind],
+//                                       stand-in pos, stand-in vel (zero));
+//   ObjectDirector::checkItemObjectCollision 0x8082ADBC(radius, stand-in, stand-in pos): the objects react as to a
+//     bob-omb (its GeoHitTableItemObj column); what the hits would do to the stand-in is not used.
+```
+
+**Measured**: no change in the five recordings (no kart differences, items 15,400 / 10,777 / 10,638 bit-exact) or
+the 13 suite cases, and all 56 ghosts still sync. The ghosts cover all 32 courses, Bowser's Castle and GBA Shy Guy
+Beach among them, so the new blasts already run in those Time Trials. In a VS race on those two courses (`test1`
+inputs) the blasts run on 918 and 560 frames and never reach an item or a reacting object. A blast forced onto
+DS Delfino Square's first wooden box (temporary hook, removed) broke both boxes there, and each dropped its item
+credited to player 0.

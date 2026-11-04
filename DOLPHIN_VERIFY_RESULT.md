@@ -373,6 +373,25 @@ mega kart through a Goomba on Mushroom Gorge (and the mushroom it drops), shells
 a star into a Coconut Mall car, a shell into a Wiggler on Maple Treeway, a star through Thwomps on Bowser's Castle,
 and a red shell into a Dry Dry Ruins bat (the bat's reset draws the race generator).
 
+## Blasts of course objects against items and objects (ported 2026-11-04, uncommitted)
+
+The function the earlier notes called the bob-omb / blue shell blast (0x807A3648) is something else: the
+`ItemDirector` keeps a stand-in item (+0x2A4) for blasts of course objects, and Bowser's fireballs, the Shy Guy
+ship's cannonballs and Moonview's bomb cars call it (0x8079A654) while they explode. Every item in the blast is
+knocked away and broken, then the course objects in it react as to a bob-omb (wooden boxes break, Goombas squash,
+Thwomps spin and so on, with the stage-1 handlers). Kinoko now has it (`ItemDirector::explodeAt`) and the fireballs
+and cannonballs call it; bomb cars are still not in Kinoko. The bob-omb's and blue shell's own blasts already reach
+course objects through the item's own collision pass (the eleventh pass), and the item's state after a hit is the
+one that pass gives: an exploding bob-omb has its breaking flag set (+0x78 0x40), so the object hits neither push
+it out nor bounce or break it (0x807A1ED8 and 0x807A18FC skip breaking items), and it goes on exploding.
+
+**Verified**: no change, as expected: no kart differences, items 15,400 / 10,777 / 10,638, 13/13 suite, 56/56
+ghosts (the ghosts include Bowser's Castle and GBA Shy Guy Beach, so the new blasts run in Time Trials without
+changing anything). A blast forced onto a wooden box on DS Delfino Square broke the two boxes there; their drops
+were credited to player 0, as the stand-in item's owner is 0 in the game. A confirming recording: a green shell or
+banana dropped next to Bowser's fireball as it explodes on Bowser's Castle, or near a cannonball landing on GBA Shy
+Guy Beach (the item should break).
+
 ## Server-controlled random numbers (for lockstep online)
 
 What draws from the race's two generators in Kinoko today: the first (RaceManager +0x04) feeds offline item rolls
@@ -452,8 +471,8 @@ kart code), Frame Advance hotkey F (already set). CPU thread (dual core) off, as
 
 ## Still to compare
 
-- Course objects hit by items or by star / mega karts (and item-vs-course-object collision): ported, but no
-  recording exercises them.
+- Course objects hit by items or by star / mega karts, and course objects' blasts against items and objects:
+  ported, but no recording exercises them.
 - Items: item-vs-course-object collision is ported but no recording exercises it; the stretches where Dolphin ran free (`test3` 6713 to 8431, `test4` 18555 to 20470) would need a
   re-record; nothing past frame 6713 of `test3` or 18554 of `test4` has been compared. `test5` is compared to
   its end.
