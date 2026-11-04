@@ -282,6 +282,32 @@ the item to the hand on the next frame either way, which is why only the throw f
 11,435 (the rest is after frame 6713 or inside the fake item box's trail); no kart differences in `test1` to `test5`,
 13/13 suite cases, 56/56 ghosts, web module `?v=37`.
 
+## Items against course objects (ported 2026-11-04, uncommitted)
+
+The game's item-vs-course-object pass (`ItemObj` 0x807A1ED8, called by the item update 0x8079EFEC after the
+item-item pass, by a landed bob-omb, and by the held-item trail 0x80791CC8) was missing. It asks the
+`ObjectDirector` (0x8082ADBC) for the course objects the item's point-and-radius touches, reads what the hit does to
+the item and to the object from `GeoHitTableItem.bin` / `GeoHitTableItemObj.bin` (one column per item kind; the
+director now loads them next to the kart tables), lets each object react (`processItemReactions` 0x8081F778,
+`onItemCollision` vtable +0xC4), then bounces the item like off a wall (reaction 1, through the item-item response
+0x807A18FC), or knocks it aside and breaks it (reaction 2), and pushes it out by the largest overlaps. A dropped item
+that cannot survive hits just vanishes. Ported with it: the wooden boxes breaking under an item (the drop flies away
+from the item, credited to its thrower), the pipe jump, the pylon knock-over, the Shy Guy ball exploding, the fire
+snake and the volcano ball put out, and the push-free statue, oil and Choropu hole. The shells' wall callbacks
+(green 0x807B62B8, red on the route 0x807AA5AC) were null in Kinoko, so a shell never bounced off another item
+either; both are ported. Objects whose hit state Kinoko lacks for karts as well (Thwomps, Goombas, cars, cows,
+Wigglers, Shy Guys, penguins, crabs and a few more; list in `docs/kart_collision_decomp.md`, eleventh pass) keep
+the default: the item still bounces or breaks, the object does not react.
+
+**Verified**: no recording has an item touching a course object (checked with a temporary trace: zero hits in
+`test3`, `test4`, `test5`), and all five stay exactly as before: no kart differences, items 15,400 of 15,400
+(`test4`), 10,777 of 10,777 (`test5`), 10,638 of 11,435 (`test3`), 13/13 suite, 56/56 ghosts. A self-check on DS
+Delfino Square (`test5` inputs plus scripted items, no crash in any run): a green shell thrown at race frame 6790
+breaks on wooden box 1 at 6802, the box breaks and drops its mushroom then (credited to the thrower) instead of at
+6808 under the kart, and the kart drives through at full speed where it otherwise slows to 3.7; a green shell bounces
+off a small tree; red shells break on trees. A confirming recording would need a shell or banana thrown into a wooden
+box or tree (and ideally a red shell bouncing off another item), logged with the item objects.
+
 ## Server-controlled random numbers (for lockstep online)
 
 What draws from the race's two generators in Kinoko today: the first (RaceManager +0x04) feeds offline item rolls
@@ -361,7 +387,7 @@ kart code), Frame Advance hotkey F (already set). CPU thread (dual core) off, as
 
 ## Still to compare
 
-- Items: item-vs-course-object collision; the stretches where Dolphin ran free (`test3` 6713 to 8431, `test4` 18555 to 20470) would need a
+- Items: item-vs-course-object collision is ported but no recording exercises it; the stretches where Dolphin ran free (`test3` 6713 to 8431, `test4` 18555 to 20470) would need a
   re-record; nothing past frame 6713 of `test3` or 18554 of `test4` has been compared. `test5` is compared to
   its end.
 - Two karts side by side at speed for a long time (only pushing at low speed so far).

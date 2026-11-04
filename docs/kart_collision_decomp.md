@@ -761,3 +761,111 @@ is operation order; the formulas were right.
 // base the held item hangs from, never what a throw starts from. Kinoko used it in both throws (the 13 throw frames of
 // test4); fixed 2026-11-04.
 ```
+
+## Item against course objects (eleventh pass, 2026-11-04)
+
+```c
+// Callers. ItemObj update 0x8079EFEC, after the state function, with a box collision unit (+0xB0):
+//   not landed (+0x78 bit 3): BoxColManager search 0x80786774 (mask 0xE: item and both object bits),
+//     item-item 0x807A1C94, then 0x807A1ED8;
+//   landed and kind 9 (bob-omb): search with mask 0xC (objects only), then 0x807A1ED8.
+// ItemTrail 0x80791CC8, per held item that has a unit (last to first): search 0xE, 0x807A1C94, 0x807A1ED8.
+// Explosions (0x807A3648, bob-omb / blue shell blast vs items) also call the director search: not ported.
+
+// ItemObj::calcObjectCollision 0x807A1ED8 (item = this):
+//   if (!boxColUnit) return;
+//   min = max = (0,0,0);                                          // 0x808A5200
+//   n = ObjectDirector::checkItemObjectCollision(radius +0xB8, item, &pos +0x44);   // 0x8082ADBC
+//   if (n && vanishesOnHit(item)) { startVanish(item, 0); return; }  // 0x8079FF14, 0x807A6C14
+//   for i < n:
+//     r = director +0x48[i]; d = director +0x44 + 12 * i;        // reaction on the item, hit depth
+//     if (!(flags & 0x40 Breaking) && r) { VEC3Minimize(min, min, d); VEC3Maximize(max, max, d); }
+//         // 0x800855C0 / 0x80085580: fsel on (b - a) / (a - b), so equal values keep the first operand
+//     if (r == 1) {                                              // bounce
+//       p = (prevPos.x - d.x, prevPos.y, prevPos.z - d.z);       // prevPos +0xBC
+//       v = 0x8082B42C(i);  // object's collision ? its +0x10 movement (0x80573520) : zero (0x802A4100)
+//       calcItemPairResponse(item, 1, p, v);                     // 0x807A18FC, the item-item response
+//       flags &= ~0x20000;                                       // owner immunity off
+//     } else if (r == 2) {                                       // knocked aside, breaks
+//       s = (vel.z, 0, -vel.x); if (PSVECDot(s, d) > 0) s *= -1; s.y = 0;   // dot as ps_madd + ps_sum0
+//       NormaliseInto(s, s);  p = s * 200 + pos;                 // 0x807872C0, 0x808A5268
+//       if (vel.y > 0) vel.y = 0; vel.x *= -0.25; vel.z *= -0.25;   // 0x808A526C
+//       calcItemPairResponse(item, 2, p, -vel);
+//     }
+//     if (!boxColUnit) break;
+//   pos += min + max;
+
+// ObjectDirector::checkItemObjectCollision 0x8082ADBC (radius f1, item r4, pos r5):
+//   point collider +0x134 (vtable 0x808D7FF8; support = centre +0x154, radius +0x150) = (pos, radius);
+//   while (obj = BoxColManager::getNextObject()) {               // 0x80785E5C
+//     if (!obj->collision()) continue;                           // vt +0xB4
+//     onItem = GeoHitTableItem   (+0x08) row[slot(obj->id())][item->kind];   // rows of 15 s16, header skipped
+//     onObj  = GeoHitTableItemObj(+0x0C) row[slot(obj->id())][item->kind];
+//     if (onObj && onItem != 7) { if (onItem == 1 && (item flags & 1 Trailing)) continue; }
+//     else if (onItem == 0 || onItem == 7 || (item flags & 1)) continue;
+//     obj->calcCollisionTransform();                             // vt +0x74
+//     if (!ObjectCollisionBase::check(point, obj->collision(), &director +0x44[n])) continue;   // 0x80834348
+//     obj->processItemReactions(item, &onItem, &onObj);          // vt +0xBC
+//     if (!item || !vanishesOnHit(item))
+//       director +0x48[n] = obj->onItemCollision(item, onItem, onObj, &depth[n]);   // vt +0xC4
+//     director +0x40[n++] = obj;
+//   }
+//   director +0x4C = n;  (the kart search 0x8082AB04 uses the same three arrays; no y clamp here)
+// Table constructor 0x807F9278: count, field count, then per row a header s16 and `fields` values; the row pointer
+//   kept at +0x0C points past the header. Director constructor 0x8082A38C loads, in order, GeoHitTableItem.bin (+0x08),
+//   GeoHitTableItemObj.bin (+0x0C), GeoHitTableKart.bin (+0x10), GeoHitTableKartObj.bin (+0x14).
+// Values: on the item 0 none, 1 bounce, 2 break, 7 never collide; on the object 3 / 4 hit, 5 / 6 hit offline only.
+//   On DS Delfino Square: item boxes are 0 / 0 for every kind (never collide); the wooden box breaks green and red
+//   shells, bananas and bob-ombs and is broken by shells and bob-ombs (object reaction 5); the small tree 0x15B
+//   bounces green shells and bananas and breaks red shells.
+
+// ObjectCollidable defaults (vtable 0x808D6DD8): +0xBC processItemReactions 0x8081F778: director +0x54 (online) or
+//   +0x55 (Time Trial / ghost race) -> unchanged, else onObj 5 -> 3, 6 -> 4 (unlike the kart one, nothing dropped).
+//   +0xC4 onItemCollision 0x806817A4: return onItem.
+
+// Overrides ported (object state already in Kinoko):
+//   ObjectBreakable 0x8076F1DC (wooden boxes, both kinds): item && onObj 3 -> vt +0x10C breakByItem(item, depth),
+//     onObj 5 -> vt +0x110 breakByItemUntimed; mission counter (RaceConfig +0xB70 == 4) left out; return onItem.
+//     Base +0x10C / +0x110 empty (0x8076F2D8 / 0x8076F2DC).
+//   ObjectWoodbox 0x8077EA6C: breakObject(vt +0xF8)(item flags & 0x8000 NoOwner ? 12 : owner +0x6C, -depth); effect
+//     +0x100 and sound 0x808204FC visual. 0x8077EB08: the same unless director +0x55.
+//   ObjectDokan 0x80778CC4: onObj 3 or 5 and !+0xB0 -> +0xB0 = 1, +0xB4 = ey * 100 (0x808D04C8); no rumble.
+//   ObjectPylon 0x8082DFD8: state +0xB0 <= 1 -> +0xE4 = RaceManager timer, startHit with factor 0.5 (0x808AC8B8),
+//     the same arithmetic as the kart's 0x8082E3F0 (vel = (-d.x, 0, -d.z) normalised, angVel = vel * 0.5 * 0.5,
+//     vel.y = 0.85, vel *= 0.5 * 100, depth normalised); returns 0 for every onObj (the item passes through).
+//   ObjectHeyhoBall 0x806D0978: onObj 3..6 and state != 3 -> next state 3 (explode).
+//   ObjectFireSnakeV 0x806C18A8: onObj 3..6 and state != 5 -> next state 5 (despawning).
+//   ObjectVolcanoBall 0x806E2D80: onObj 3..6 -> +0xF9 = 1. calcBurning 0x806E3324 then disables the collision
+//     (vt +0x90) every frame; calcFalling 0x806E3034 re-enables it (vt +0x94) when the rail ends; init 0x806E2C4C and
+//     enterState1 0x806E2F38 clear +0xF9.
+//   ObjectKoopaFigure64 0x806C0824, ObjectOilSFC 0x806DDA54: item -> depth = 0, return onItem.
+//   ObjectChoropuHoll 0x806B9674: item -> depth = 0, return 0. (ObjectChoropuGround 0x806B926C returns onItem.)
+
+// Not ported: the object's VS hit state is not in Kinoko for karts either (kart reactions 3 / 4 are dropped in
+//   Time Trials, which is all Kinoko ran before VS):
+//   ObjectDossun* 0x80760118 / 0x80760AD4 (vt +0x108: anim state 5, a spin; base returns 1 while +0xB4 is 0),
+//   ObjectPenguin 0x80775CE0 (vt +0x108 0x80775D2C: state 5), ObjectHwanwan 0x806E9D6C (state 2),
+//   ObjectKuribo 0x806DBA98 (squashed, drops a mushroom through 0x80799FBC), ObjectCarA 0x806B802C,
+//   ObjectCarTGE 0x806D7780, ObjectCow 0x806BC3F0, ObjectHanachan 0x806C6E40, ObjectHeyho 0x806CF198,
+//   ObjectCrab 0x808862D4, ObjectPakkunF 0x8077502C, ObjectParasolR 0x80779A68, ObjectPoihana 0x80749504,
+//   ObjectBoble 0x8075E28C, ObjectBasabasaDummy 0x806B6A18. Their item hits use the default (return onItem).
+
+// The shells' wall callbacks (+0x174, called by calcItemPairResponse reaction 1, for item-item and item-object):
+//   green / thrown 0x807B62B8 (set by initThrow 0x807B5178 from 0x808D25E0, thunk 0x807A3920):
+//     n.y > 0 ? reflect(n) : reflect((n.x, 0, n.z)); vel = moveDir +0x1B0 * speed +0x1A0.
+//     reflect is the KCL wall reflection of 0x807B54F4: proj = n * PSVECDot(dir, n) (0x807DE8B8); dir -= proj;
+//     reflects (+0x1CE) ? dir -= proj; y damping 0.7 (0x808A6144); NormaliseInto; side = PSVECCrossProduct(dir, up);
+//     moveDir = dir; plus a sound (0x807A2F18, id 0xF9). (Kinoko's side uses cross(), not ps_cross(); side is not
+//     read before it is recomputed, so it has no effect.)
+//   red shell on the route or homing 0x807AA5AC (enterStateRoute 0x807AAE58, enterStateHoming 0x807AB004, tables
+//     0x808D220C / 0x808D2218, thunk 0x807A3928): 0x807B532C (free from velocity), 0x807B62B8, next state +0x2B8 = 1.
+//   Kinoko had both left null, which also skipped the bounce in item-item collisions.
+//   0x807B66F0 (a shell restarted from its velocity) also sets 0x807B62B8; it is not ported.
+```
+
+**Measured**: no item touches a course object in any of the five recordings, and all stay as before: no kart
+differences, items 15,400 / 10,777 / 10,638 bit-exact, 13/13 suite, 56/56 ghosts. Self-check on DS Delfino Square
+(`test5` inputs plus scripted items): a green shell thrown at race frame 6790 meets wooden box 1 at 6802 (reaction 2),
+breaks, and the box breaks and drops a mushroom credited to the thrower at 6802 (the kart breaks it at 6808 without the
+shell) and the kart drives through at full speed; a green shell bounces off a small tree (velocity (204, -2, -20) to
+(171, 0, -113), pushed out by the hit depth); red shells break on trees.
