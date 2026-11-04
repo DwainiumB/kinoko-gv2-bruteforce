@@ -745,3 +745,19 @@ is operation order; the formulas were right.
 
 **Measured**: `test4` items 13,004 -> 15,387 of 15,400 bit-exact (the rest are 13 throw frames), `test3` items
 10,366 -> 10,638 of 11,435, `test5` 10,777 of 10,777, no kart differences, 13/13 suite, 56/56 ghosts.
+
+## The throw frame: where a thrown item starts (tenth pass, 2026-11-04)
+
+```c
+// ItemObjKoura::initThrow 0x807B5178 (speed, trail, bounces, forward, floats):
+//   forward ? 0x80794E88 (speed, 1.0, 35) : 0x80795030 (30, 1.0, 40) -> +0x1A0 speed, +0x1A4 dir;
+//   +0x1B0.. basis (dir, side = (-dir.z, 0, dir.x)); vel.x = dir.x * speed (+0x50), vel.z = dir.z * speed (+0x58);
+//   if (scale +0x68 < 0.8) { scaleVec +0x5C..+0x64 = scale = 0.8; if (forward) pos +0x44 = KartObjectProxy::getPos() }
+//   bounces +0x1C8 / limit +0x1CD, onWall table 0x808D25E0 (+0x174..), 0x807915A8 (air frames from status 41/42),
+//   flags +0x78 |= 0x01000000 (Released).
+// Banana / fake box throw 0x807B7104: the same getPos() copy (0x807B7374) for a forward throw, then the 0.8 floor.
+// getPos is the kart's own position. The trail's m_pose[3] (+0x58 + 0x24, set by calcKartPose 0x80791E5C) is that
+// position plus the wheelie bob and the item forward offset (stats +0x17C * scale.z, 3 for the Standard Kart): the
+// base the held item hangs from, never what a throw starts from. Kinoko used it in both throws (the 13 throw frames of
+// test4); fixed 2026-11-04.
+```

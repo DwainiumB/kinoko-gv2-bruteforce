@@ -12,7 +12,7 @@ two-player split-screen races of the PAL game (RMCP01) recorded in Dolphin.
 | `test2` | Luigi Circuit, 150cc, items off. P1 Bowser + Flame Flyer (grid place 2), P2 Baby Peach + Bit Bike, manual (place 1); seeds 0xDB5B4DBB:0x9BB4. 20 bumps, one slipstream (below). | 0 to 14919, both karts (29,838 kart-frames; frame 5605 missing from the dump, see below; the movie ends near frame 14812) | **Identical** after fixes 2 to 4. Before: first difference at race frame 6590 (boost bump), then 11915 and 11918 (wheelie bump). |
 | `test3` | Luigi Circuit, 150cc, **items on (Basic)**. P1 Mario + Standard Kart M (place 2), P2 Luigi + Standard Kart M (place 1). The replay desynced from the race as driven (Dolphin movie), so the race is whatever the replay produced; the comparison is still valid (the logger records the inputs the game used). | 0 to 6713 stepped cleanly (single-frame gaps at 6129, 6146, 6157); 6713 to 8431 Dolphin ran free (unusable); stepped again after 8431 with 16 one-frame gaps | **Identical over the whole stepped range** (13,422 kart-frames, 2026-11-02) after the fixes below: items handed out, roulettes, a fake item box and two bananas dropped, a banana bouncing off a banana, a kart spinning on a banana, both karts' positions, rotations, speeds and timers. Item objects: 10,638 of 11,435 object-frames bit-exact (after the held-item and trail fixes below). |
 
-| `test4` | Luigi Circuit, 150cc, items on (**Strategic**, item mode 2). P1 Mario + Standard Kart M (place 2), P2 Luigi + Standard Kart M (place 1); seeds 0xA5852924:0x01005252. Items used: green shells (one triple), mushrooms (one triple), bananas thrown forward and dragged; 16 karts hit by shells / bananas (actions on P1 at 2470, 3059, 3869, 4395, 5170, 6387, 17779; P2 at 749, 2055, 6574, 7566, 8141, 8521, 9890, 12205, 18424). | 0 to 18554 stepped (single-frame gaps at 1474, 7594, 11014, 15334); 18555 to 20470 Dolphin ran free (unusable); stepped again to 22403 | **Identical over 0 to 18554** (36,850 kart-frames, 2026-11-03) after the fix below. Before: first difference at race frame 17779 (P1 hit one frame late by a dragged banana). Item objects: 15,387 of 15,400 object-frames bit-exact; the other 13 are throw frames (below). |
+| `test4` | Luigi Circuit, 150cc, items on (**Strategic**, item mode 2). P1 Mario + Standard Kart M (place 2), P2 Luigi + Standard Kart M (place 1); seeds 0xA5852924:0x01005252. Items used: green shells (one triple), mushrooms (one triple), bananas thrown forward and dragged; 16 karts hit by shells / bananas (actions on P1 at 2470, 3059, 3869, 4395, 5170, 6387, 17779; P2 at 749, 2055, 6574, 7566, 8141, 8521, 9890, 12205, 18424). | 0 to 18554 stepped (single-frame gaps at 1474, 7594, 11014, 15334); 18555 to 20470 Dolphin ran free (unusable); stepped again to 22403 | **Identical over 0 to 18554** (36,850 kart-frames, 2026-11-03) after the fix below. Before: first difference at race frame 17779 (P1 hit one frame late by a dragged banana). Item objects: **15,400 of 15,400** object-frames bit-exact (2026-11-04, after the throw-frame fix below; 15,387 before it). |
 | `test5` | **DS Delfino Square**, 150cc, VS, items on (Basic, item mode 0), wooden boxes. P1 Mario + Standard Kart M (place 2), P2 Luigi + Standard Kart M (place 1); seeds 0x71F4992B:0x01003249 (the value at RaceConfig +0xB94 in this dump, 0x37E4E46C, is not the race's seed; the Opus commit session recovered the right one). Seven wooden boxes broken by karts, items dropped by boxes (mushrooms, a banana), a mushroom that fell off the course, P2 falling off the course and respawning at 9200. | 0 to 11085 stepped (single-frame gaps at 577, 3277, 3997, 10117); the movie ends near 11085 | **Identical over the whole recording** (22,164 kart-frames, 2026-11-03) after the six fixes below; item objects 10,777 of 10,777 object-frames bit-exact. Before: first differences at 7001 (box-dropped mushroom), 8341, 9199 (item fixes by the commit session), then 9200 (respawn position). |
 
 ### What `test2` contains (from the dump)
@@ -200,12 +200,7 @@ compared). Item objects up to 17790: 10,258 -> 12,179 of 14,574 object-frames bi
 bit-exact, 56/56 ghosts, 13/13 suite cases, web module `?v=34`.
 
 **Still inexact (items only; no kart was affected)**:
-- The frame a shell or banana is thrown forward: in 10 throws the game reports the item exactly at the thrower's kart
-  position, where Kinoko already has it in the driver's hand (2 to 3 units away); from the next frame on they agree bit
-  for bit. In other throws the two agree. Deciding this needs the hand-position code (0x807D171C, render side), not
-  decompiled yet. *Still open after the trail rounding fixes (next section): these are now the only 13 inexact item
-  frames up to 18554, 10 green shells and 3 bananas, one frame each. The gap is close to 3 x the kart's forward vector,
-  the trail's forward offset (`trailUpOfs * scale.z` = 3), a lead for whoever takes it on.*
+- ~~The frame a shell or banana is thrown forward: the game reports the item exactly at the thrower's kart position, Kinoko 2 to 3 units away; from the next frame on they agree bit for bit.~~ Fixed 2026-11-04 (the throw-frame section below): `initThrow` copied the trail's forward-shifted anchor base instead of the kart's position. The 0x807D171C hand code had been ported all along; it was not the cause.
 - ~~Green shells in flight drift by up to 0.026 units on some runs (float rounding), without changing any hit.~~
   Fixed 2026-11-03 (next section).
 - ~~The first frames of two held items still differ by 2 to 3 units (green shell 734 to 743, banana 2452 to 2488).~~
@@ -270,6 +265,22 @@ flight. Everything was in float rounding order or in a few constants, all in the
 bit-exact 34 -> 10, all of them throw frames (above). `test3` items 10,536 -> 10,638 of 11,435 (they were 10,366
 before the normalise helpers). `test5` 10,777 of 10,777 and no kart differences in `test1` to `test5`, 13/13 suite
 cases, 56/56 ghosts, web module `?v=36`.
+
+## `test4` the throw frame (fixed 2026-11-04, uncommitted)
+
+The last 13 inexact item frames of `test4` (10 green shells, 3 bananas, each on the frame it was thrown forward) were
+the same mistake twice. Dolphin's dump shows the thrown item exactly at its owner's kart position on that frame, all
+three components bit-equal; Kinoko's sat 2 to 3 units ahead of it. The game's throw starts (`ItemObjKoura::initThrow`
+0x807B5178 and the banana's 0x807B7104) read the kart's own position (`KartObjectProxy::getPos` 0x8059020C) when they
+reset a small item to scale 0.8. Kinoko's read `ItemTrail::kartPos()`, which was `m_pose[3]`: the kart position with
+the bob and the item forward offset (`trailUpOfs * scale.z`, 3 units for the Standard Kart) already added by
+`calcKartPose` (0x80791E5C). That is the trail's anchor base, not the kart position. Both call sites now use
+`trail.kartObject()->pos()` and the misnamed accessor is gone. Nothing downstream depended on it: `calcRelease` moves
+the item to the hand on the next frame either way, which is why only the throw frame differed.
+
+**Measured**: `test4` item objects 15,387 -> **15,400 of 15,400** bit-exact; `test3` items unchanged at 10,638 of
+11,435 (the rest is after frame 6713 or inside the fake item box's trail); no kart differences in `test1` to `test5`,
+13/13 suite cases, 56/56 ghosts, web module `?v=37`.
 
 ## Server-controlled random numbers (for lockstep online)
 
@@ -350,8 +361,7 @@ kart code), Frame Advance hotkey F (already set). CPU thread (dual core) off, as
 
 ## Still to compare
 
-- Items: a thrown item's first frame (`test4` section); item-vs-course-object
-  collision; the stretches where Dolphin ran free (`test3` 6713 to 8431, `test4` 18555 to 20470) would need a
+- Items: item-vs-course-object collision; the stretches where Dolphin ran free (`test3` 6713 to 8431, `test4` 18555 to 20470) would need a
   re-record; nothing past frame 6713 of `test3` or 18554 of `test4` has been compared. `test5` is compared to
   its end.
 - Two karts side by side at speed for a long time (only pushing at low speed so far).
