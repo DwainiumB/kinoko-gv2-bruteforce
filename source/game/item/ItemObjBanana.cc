@@ -7,6 +7,7 @@
 
 #include "game/field/CollisionDirector.hh"
 
+#include "game/kart/KartObject.hh"
 #include "game/system/RaceManager.hh"
 
 namespace Kinoko::Item {
@@ -88,7 +89,8 @@ void ItemObjThrowable::initThrow(f32 forwardSpeed, f32 upSpeed, f32 backUpSpeed,
             m_pos += (trail.up() - trail.forward()) * DROP_OFFSET;
         }
     } else {
-        m_pos = trail.kartPos();
+        // The kart's own position (KartObjectProxy::getPos), not the trail's anchor base.
+        m_pos = trail.kartObject()->pos();
     }
 
     if (m_scale < MIN_SCALE) {

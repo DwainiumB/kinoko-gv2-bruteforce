@@ -58,7 +58,8 @@ void ItemObjKoura::initThrow(f32 speed, ItemTrail &trail, s32 bounces, bool forw
         m_scale = MIN_SCALE;
         m_scaleVec = EGG::Vector3f(MIN_SCALE, MIN_SCALE, MIN_SCALE);
         if (forward) {
-            m_pos = trail.kartPos();
+            // The kart's own position (KartObjectProxy::getPos), not the trail's anchor base.
+            m_pos = trail.kartObject()->pos();
         }
     }
 

@@ -69,10 +69,6 @@ public:
         return m_forcedRelease;
     }
 
-    [[nodiscard]] const EGG::Vector3f &kartPos() const {
-        return m_pose[3];
-    }
-
     [[nodiscard]] const EGG::Vector3f &right() const {
         return m_pose[0];
     }
@@ -125,7 +121,7 @@ private:
     std::array<ItemObj *, 3> m_objs;  ///< +0x20
     s32 m_count;                      ///< +0x50
     s32 m_dropTimer;                  ///< +0x54 Drops one held item at 8, 4 and 0.
-    std::array<EGG::Vector3f, 4> m_pose; ///< +0x58 Right, up, forward, position.
+    std::array<EGG::Vector3f, 4> m_pose; ///< +0x58 Right, up, forward, and the kart position shifted forward by the item offset (not the kart position itself).
     EGG::Vector3f m_velocity;         ///< +0x88
     f32 m_speed;                      ///< +0x94
     f32 m_speedRatio;                 ///< +0x98
