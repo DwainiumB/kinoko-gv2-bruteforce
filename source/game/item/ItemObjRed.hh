@@ -24,6 +24,7 @@ private:
     void enterStateRoute();
     void calcStateRoute();
     void enterStateHoming();
+    void onRouteWall(const EGG::Vector3f &nrm);
     void calcStateHoming();
     void calcStateLost();
     void startState(s32 state);

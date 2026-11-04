@@ -201,7 +201,7 @@ void ItemObjRedShell::calcStateSearch() {
 
 /// @addr{0x807AAE58}
 void ItemObjRedShell::enterStateRoute() {
-    m_onWall = nullptr; // 0x807B62B8 wall callback: used by item-item collision only.
+    m_onWall = static_cast<WallFunc>(&ItemObjRedShell::onRouteWall);
 }
 
 /// @addr{0x807AAE78}
@@ -230,7 +230,16 @@ void ItemObjRedShell::calcStateRoute() {
 
 /// @addr{0x807AB004}
 void ItemObjRedShell::enterStateHoming() {
-    m_onWall = nullptr;
+    m_onWall = static_cast<WallFunc>(&ItemObjRedShell::onRouteWall);
+}
+
+/// @addr{0x807AA5AC}
+/// @brief The wall callback while following the route or homing: bounced off another item or a
+/// course object, the shell gives up and slides freely (state 1).
+void ItemObjRedShell::onRouteWall(const EGG::Vector3f &nrm) {
+    freeFromVelocity();
+    onWallBounce(nrm);
+    m_nextState = 1;
 }
 
 /// @addr{0x807AB024}

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "game/field/ObjectCollisionConvexHull.hh"
+#include "game/field/ObjectCollisionPoint.hh"
 #include "game/field/ObjectFlowTable.hh"
 #include "game/field/ObjectHitTable.hh"
 #include "game/field/obj/ObjectCollidable.hh"
@@ -20,6 +21,12 @@ class Context;
 
 } // namespace Host
 
+namespace Item {
+
+class ItemObj;
+
+} // namespace Item
+
 namespace Field {
 
 class ObjectPsea;
@@ -36,6 +43,8 @@ public:
 
     size_t checkKartObjectCollision(Kart::KartObject *kartObj,
             ObjectCollisionConvexHull *convexHull);
+    size_t checkItemObjectCollision(f32 radius, Item::ItemObj *item, const EGG::Vector3f &pos);
+    [[nodiscard]] EGG::Vector3f collidingObjectTranslation(size_t idx) const;
 
     [[nodiscard]] const ObjectFlowTable &flowTable() const {
         return m_flowTable;
@@ -53,6 +62,12 @@ public:
     [[nodiscard]] Kart::Reaction reaction(size_t idx) const {
         ASSERT(idx < m_reactions.size());
         return m_reactions[idx];
+    }
+
+    /// @brief What the hit does to the item (director +0x48, written by the item search).
+    [[nodiscard]] s32 itemReaction(size_t idx) const {
+        ASSERT(idx < m_itemReactions.size());
+        return m_itemReactions[idx];
     }
 
     [[nodiscard]] const EGG::Vector3f &hitDepth(size_t idx) const {
@@ -116,6 +131,8 @@ private:
     [[nodiscard]] ObjectBase *createObject(const System::MapdataGeoObj &params);
 
     ObjectFlowTable m_flowTable;
+    ObjectHitTable m_hitTableItem;       ///< +0x08 What a course object does to an item.
+    ObjectHitTable m_hitTableItemObject; ///< +0x0C What an item does to a course object.
     ObjectHitTable m_hitTableKart;
     ObjectHitTable m_hitTableKartObject;
 
@@ -129,6 +146,10 @@ private:
             m_collidingObjects; ///< Objects we are currently colliding with
     std::array<EGG::Vector3f, MAX_UNIT_COUNT> m_hitDepths;
     std::array<Kart::Reaction, MAX_UNIT_COUNT> m_reactions;
+    /// The item search's reactions. The game writes them into the same array as the kart ones
+    /// (+0x48); both are read right after their search.
+    std::array<s32, MAX_UNIT_COUNT> m_itemReactions;
+    ObjectCollisionPoint m_itemCollision; ///< +0x134 The searched item as a point and radius.
     ObjectPsea *m_psea;
     fixed_vector<ObjectCollidable *> m_managedObjects;
     bool m_online;

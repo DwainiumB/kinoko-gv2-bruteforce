@@ -12,6 +12,19 @@ public:
     void init() override;
     void calc() override;
 
+    /// @addr{0x806C18A8}
+    /// @brief An item puts the fire snake out (state 5, despawning).
+    s32 onItemCollision(Item::ItemObj * /*item*/, s32 reactionOnItem, s32 reactionOnObj,
+            EGG::Vector3f & /*hitDepth*/) override {
+        constexpr u16 DESPAWNING = 5;
+
+        if (reactionOnObj >= ItemHit::ObjHit && reactionOnObj <= ItemHit::ObjHitHardRaceOnly &&
+                m_currentStateId != DESPAWNING) {
+            m_nextStateId = DESPAWNING;
+        }
+        return reactionOnItem;
+    }
+
 private:
     void calcSub();
 

@@ -23,6 +23,19 @@ public:
             Kart::Reaction reactionOnKart, Kart::Reaction reactionOnObj,
             EGG::Vector3f &hitDepth) override;
 
+    /// @addr{0x806D0978}
+    /// @brief An item sets the ball off (state 3, exploding).
+    s32 onItemCollision(Item::ItemObj * /*item*/, s32 reactionOnItem, s32 reactionOnObj,
+            EGG::Vector3f & /*hitDepth*/) override {
+        constexpr u16 EXPLODING = 3;
+
+        if (reactionOnObj >= ItemHit::ObjHit && reactionOnObj <= ItemHit::ObjHitHardRaceOnly &&
+                m_currentStateId != EXPLODING) {
+            m_nextStateId = EXPLODING;
+        }
+        return reactionOnItem;
+    }
+
     /// @addr{0x806D18EC}
     [[nodiscard]] u32 loadFlags() const override {
         return 1;

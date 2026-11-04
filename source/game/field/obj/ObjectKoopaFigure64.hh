@@ -36,6 +36,16 @@ public:
         return reactionOnKart;
     }
 
+    /// @addr{0x806C0824}
+    /// @brief Items are not pushed out of the statue.
+    s32 onItemCollision(Item::ItemObj *item, s32 reactionOnItem, s32 /*reactionOnObj*/,
+            EGG::Vector3f &hitDepth) override {
+        if (item) {
+            hitDepth.setZero();
+        }
+        return reactionOnItem;
+    }
+
 private:
     const bool m_isBigStatue; ///< Differentiates the first rBC turn statue from tiny statues
     const u32 m_startDelay;

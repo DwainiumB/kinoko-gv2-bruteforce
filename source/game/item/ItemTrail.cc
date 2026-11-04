@@ -430,6 +430,7 @@ void ItemTrail::calcCollision() {
             flags.setBit(Field::eBoxColFlag::Item, Field::eBoxColFlag::Object);
             obj->m_boxColUnit->search(flags);
             obj->calcItemCollision();
+            obj->calcObjectCollision();
         }
     }
 }

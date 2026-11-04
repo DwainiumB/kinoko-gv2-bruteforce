@@ -142,6 +142,17 @@ public:
         return Kart::Reaction::Wall;
     }
 
+    /// @addr{0x806B9674}
+    /// @brief Items pass over the hole: no push and no reaction.
+    s32 onItemCollision(Item::ItemObj *item, s32 reactionOnItem, s32 /*reactionOnObj*/,
+            EGG::Vector3f &hitDepth) override {
+        if (!item) {
+            return reactionOnItem;
+        }
+        hitDepth.setZero();
+        return ItemHit::None;
+    }
+
 private:
     static constexpr f32 RADIUS = 300.0f;
 };

@@ -33,6 +33,17 @@ public:
         return 1;
     }
 
+    /// @addr{0x806E2D80}
+    /// @brief An item puts the ball out: it burns on without collision once it lands.
+    s32 onItemCollision(Item::ItemObj * /*item*/, s32 reactionOnItem, s32 reactionOnObj,
+            EGG::Vector3f & /*hitDepth*/) override {
+        if (reactionOnObj >= ItemHit::ObjHit && reactionOnObj <= ItemHit::ObjHitHardRaceOnly &&
+                !m_hitByItem) {
+            m_hitByItem = true;
+        }
+        return reactionOnItem;
+    }
+
     /// @addr{0x806E2CF0}
     Kart::Reaction onCollision(Kart::KartObject * /*kartObj*/, Kart::Reaction reactionOnKart,
             Kart::Reaction /*reactionOnObj*/, EGG::Vector3f & /*hitDepth*/) override {
@@ -59,9 +70,14 @@ private:
     void calcFalling();
 
     /// @addr{0x806E3324}
+    /// @details The fire effect is left out.
     void calcBurning() {
         if (m_currentFrame >= m_burnDuration) {
             m_nextStateId = 0;
+        }
+
+        if (m_hitByItem) {
+            disableCollision();
         }
     }
 
@@ -70,6 +86,7 @@ private:
     const f32 m_finalVel; ///< Velocity of the ball at the moment of impact
     const f32 m_endPosY;  ///< Height of the ball at the end of its rail
     const f32 m_sqVelXZ;  ///< Squared X-Z plane velocity
+    bool m_hitByItem;     ///< +0xF9 Put out by an item: no collision while it burns.
 
     static constexpr std::array<StateManagerEntry, 3> STATE_ENTRIES = {{
             {StateEntry<ObjectVolcanoBall, &ObjectVolcanoBall::enterState0,

@@ -1,5 +1,7 @@
 #include "ObjectWoodbox.hh"
 
+#include "game/item/ItemObj.hh"
+
 #include "game/field/CollisionDirector.hh"
 
 #include "game/kart/KartObject.hh"
@@ -101,6 +103,22 @@ void ObjectWoodbox::breakByKartUntimed(Kart::KartObject *kartObj) {
     }
 
     breakObject(static_cast<u8>(kartObj->param()->playerIdx()), kartObj->velocity());
+}
+
+/// @addr{0x8077EA6C}
+/// @brief Broken by an item: the drop flies away from the item, credited to the item's owner.
+/// @details The break effect (+0x100) and sound are left out.
+void ObjectWoodbox::breakByItem(Item::ItemObj *item, const EGG::Vector3f &hitDepth) {
+    breakObject(item->hitOwner(), -hitDepth);
+}
+
+/// @addr{0x8077EB08}
+void ObjectWoodbox::breakByItemUntimed(Item::ItemObj *item, const EGG::Vector3f &hitDepth) {
+    if (ObjectDirector::Instance()->isTimeTrial()) {
+        return;
+    }
+
+    breakObject(item->hitOwner(), -hitDepth);
 }
 
 } // namespace Kinoko::Field

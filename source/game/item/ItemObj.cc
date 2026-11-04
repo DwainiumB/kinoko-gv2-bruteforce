@@ -9,6 +9,7 @@
 #include "game/item/ItemRaceFlags.hh"
 
 #include "game/field/BoxColManager.hh"
+#include "game/field/ObjectDirector.hh"
 #include "game/field/CollisionDirector.hh"
 #include "game/field/ObjectCollisionKart.hh"
 
@@ -73,7 +74,7 @@ constexpr KCLTypeMask KCL_ITEM_MOVING_WATER = 0x40000000;
 
 } // namespace
 
-ItemObj::PointCollision ItemObj::s_pointCollision;
+Field::ObjectCollisionPoint ItemObj::s_pointCollision;
 
 /// @addr{0x8079D8BC}
 ItemObj::ItemObj()
@@ -240,8 +241,15 @@ bool ItemObj::calc() {
                     Field::eBoxColFlag::Drivable);
             m_boxColUnit->search(flags);
             calcItemCollision();
+            calcObjectCollision();
+        } else if (m_kind == ItemObjKind::BobOmb) {
+            // A bob-omb lying on the floor still meets course objects (the game searches with its
+            // two object bits, 0xC).
+            Field::BoxColFlag flags;
+            flags.setBit(Field::eBoxColFlag::Object);
+            m_boxColUnit->search(flags);
+            calcObjectCollision();
         }
-        // Item-vs-course-object collision (0x807A1ED8) is not ported.
     }
 
     if (m_flags.onBit(eFlags::Landed) || (m_kclMask & KCL_ITEM_SOLID)) {
@@ -695,6 +703,77 @@ void ItemObj::calcItemCollision() {
             return;
         }
     }
+}
+
+/// @addr{0x807A1ED8}
+/// @brief Item-vs-course-object collision: the course objects this item touches (found by the box
+/// collision search before) react, and the item bounces off them like off a wall or is knocked
+/// aside and breaks, as the item hit tables say. The item is then pushed out of every object by the
+/// largest overlap in each direction.
+void ItemObj::calcObjectCollision() {
+    constexpr f32 KNOCK_SIDE_DIST = 200.0f; ///< 0x808A5268
+    constexpr f32 KNOCK_VEL_SCALE = -0.25f; ///< 0x808A526C
+
+    if (!m_boxColUnit) {
+        return;
+    }
+
+    EGG::Vector3f pushMin = EGG::Vector3f::zero;
+    EGG::Vector3f pushMax = EGG::Vector3f::zero;
+
+    auto *objDir = Field::ObjectDirector::Instance();
+    size_t count = objDir->checkItemObjectCollision(m_hitRadius, this, m_pos);
+    if (count != 0 && vanishesOnHit()) {
+        startVanish(false);
+        return;
+    }
+
+    for (size_t i = 0; i < count; ++i) {
+        s32 reaction = objDir->itemReaction(i);
+        const EGG::Vector3f &depth = objDir->hitDepth(i);
+
+        if (m_flags.offBit(eFlags::Breaking) && reaction != Field::ItemHit::None) {
+            // VEC3Minimize / VEC3Maximize (0x800855C0 / 0x80085580): fsel on the difference.
+            auto minimum = [](f32 a, f32 b) { return b - a >= 0.0f ? a : b; };
+            auto maximum = [](f32 a, f32 b) { return a - b >= 0.0f ? a : b; };
+            pushMin = EGG::Vector3f(minimum(pushMin.x, depth.x), minimum(pushMin.y, depth.y),
+                    minimum(pushMin.z, depth.z));
+            pushMax = EGG::Vector3f(maximum(pushMax.x, depth.x), maximum(pushMax.y, depth.y),
+                    maximum(pushMax.z, depth.z));
+        }
+
+        if (reaction == Field::ItemHit::Bounce) {
+            // Bounce off a point just behind the previous position, as if it were another item.
+            EGG::Vector3f objPos(m_prevPos.x - depth.x, m_prevPos.y, m_prevPos.z - depth.z);
+            EGG::Vector3f objVel = objDir->collidingObjectTranslation(i);
+            calcItemPairResponse(1, objPos, objVel);
+            m_flags.resetBit(eFlags::OwnerImmune);
+        } else if (reaction == Field::ItemHit::Break) {
+            // Knocked aside from a point beside the item, on the side away from the object, and
+            // slowed to a quarter, reversed.
+            EGG::Vector3f side(m_vel.z, 0.0f, -m_vel.x);
+            if (side.ps_dot(depth) > 0.0f) {
+                side *= -1.0f;
+            }
+            side.y = 0.0f;
+            NormaliseInto(side, side);
+            side = side * KNOCK_SIDE_DIST + m_pos;
+
+            if (m_vel.y > 0.0f) {
+                m_vel.y = 0.0f;
+            }
+            m_vel.x *= KNOCK_VEL_SCALE;
+            m_vel.z *= KNOCK_VEL_SCALE;
+
+            calcItemPairResponse(2, side, -m_vel);
+        }
+
+        if (!m_boxColUnit) {
+            break;
+        }
+    }
+
+    m_pos += pushMin + pushMax;
 }
 
 /// @addr{0x807A0E28}

@@ -16,12 +16,14 @@ ObjectHitTable::ObjectHitTable(const char *filename) {
 
     m_count = stream.read_s16();
     m_fieldCount = stream.read_s16();
-    m_reactions = owning_span<s16>(m_count);
+    m_reactions = owning_span<s16>(m_count * m_fieldCount);
 
-    for (auto &reaction : m_reactions) {
+    // The game keeps a pointer per row, just past its header (+0x0C).
+    for (s16 i = 0; i < m_count; ++i) {
         stream.skip(0x2);
-        reaction = stream.read_s16();
-        stream.skip(m_fieldCount * 2 - 2);
+        for (s16 j = 0; j < m_fieldCount; ++j) {
+            m_reactions[i * m_fieldCount + j] = stream.read_s16();
+        }
     }
 
     m_slots = reinterpret_cast<const s16 *>(stream.dataAtIndex());
@@ -33,7 +35,16 @@ ObjectHitTable::~ObjectHitTable() = default;
 Kart::Reaction ObjectHitTable::reaction(s16 i) const {
     ASSERT(i != -1);
     ASSERT(i < m_count);
-    return static_cast<Kart::Reaction>(m_reactions[i]);
+    return static_cast<Kart::Reaction>(m_reactions[i * m_fieldCount]);
+}
+
+/// @brief The reaction in `column` of row `i` (an item table read by item object kind, as
+/// 0x8082ADBC does).
+s16 ObjectHitTable::reaction(s16 i, s16 column) const {
+    ASSERT(i != -1);
+    ASSERT(i < m_count);
+    ASSERT(column < m_fieldCount);
+    return m_reactions[i * m_fieldCount + column];
 }
 
 s16 ObjectHitTable::slot(ObjectId id) const {

@@ -8,18 +8,22 @@
 
 namespace Kinoko::Field {
 
+/// @brief One of the GeoHitTable files: per object slot a header and `fieldCount` reactions. The
+/// kart tables have one column, the item tables (GeoHitTableItem.bin, GeoHitTableItemObj.bin) one
+/// per item object kind.
 class ObjectHitTable {
 public:
     ObjectHitTable(const char *filename);
     ~ObjectHitTable();
 
     Kart::Reaction reaction(s16 i) const;
+    [[nodiscard]] s16 reaction(s16 i, s16 column) const;
     s16 slot(ObjectId id) const;
 
 private:
     s16 m_count;
     s16 m_fieldCount;
-    owning_span<s16> m_reactions;
+    owning_span<s16> m_reactions; ///< `m_count` rows of `m_fieldCount` values, the headers left out.
     const s16 *m_slots;
 };
 

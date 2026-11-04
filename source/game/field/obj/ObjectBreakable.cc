@@ -41,6 +41,23 @@ Kart::Reaction ObjectBreakable::onCollision(Kart::KartObject *kartObj,
     return reactionOnKart;
 }
 
+/// @addr{0x8076F1DC}
+/// @details The mission counter is left out.
+s32 ObjectBreakable::onItemCollision(Item::ItemObj *item, s32 reactionOnItem, s32 reactionOnObj,
+        EGG::Vector3f &hitDepth) {
+    if (!item) {
+        return reactionOnItem;
+    }
+
+    if (reactionOnObj == ItemHit::ObjHit) {
+        breakByItem(item, hitDepth);
+    } else if (reactionOnObj == ItemHit::ObjHitRaceOnly) {
+        breakByItemUntimed(item, hitDepth);
+    }
+
+    return reactionOnItem;
+}
+
 /// @addr{0x8076EDE4}
 /// @brief Breaks the object. With items on, it drops a random item (setting 2: the chance in
 /// percent, setting 1: the item box setting) towards dir.

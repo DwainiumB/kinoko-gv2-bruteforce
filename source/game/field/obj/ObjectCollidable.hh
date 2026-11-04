@@ -13,7 +13,30 @@ enum class Reaction;
 
 } // namespace Kart
 
+namespace Item {
+
+class ItemObj;
+
+} // namespace Item
+
 namespace Field {
+
+/// @brief The values of the item hit tables: GeoHitTableItem.bin says what a course object does to
+/// an item, GeoHitTableItemObj.bin what the item does to the object.
+namespace ItemHit {
+
+enum : s32 {
+    None = 0,
+    Bounce = 1,     ///< The item bounces off like off a wall.
+    Break = 2,      ///< The item is knocked aside and breaks.
+    ObjHit = 3,     ///< The object is hit.
+    ObjHitHard = 4, ///< The object is hit harder (some objects also get pushed).
+    ObjHitRaceOnly = 5,     ///< ObjHit in offline races other than Time Trials (0x8081F778).
+    ObjHitHardRaceOnly = 6, ///< ObjHitHard in offline races other than Time Trials.
+    Pass = 7,               ///< The item never collides with the object.
+};
+
+} // namespace ItemHit
 
 class ObjectCollidable : public ObjectBase {
 public:
@@ -36,6 +59,18 @@ public:
             Kart::Reaction reactionOnKart, Kart::Reaction /*reactionOnObj*/,
             EGG::Vector3f & /*hitDepth*/) {
         return reactionOnKart;
+    }
+
+    virtual void processItemReactions(const Item::ItemObj *item, s32 &reactionOnItem,
+            s32 &reactionOnObj);
+
+    /// @addr{0x806817A4}
+    /// @brief An item touched this object (vtable +0xC4): the object reacts to `reactionOnObj`.
+    /// @param item Can be null in the game (the overrides check it); never null in Kinoko.
+    /// @return What happens to the item.
+    virtual s32 onItemCollision(Item::ItemObj * /*item*/, s32 reactionOnItem,
+            s32 /*reactionOnObj*/, EGG::Vector3f & /*hitDepth*/) {
+        return reactionOnItem;
     }
 
     virtual void onWallCollision(Kart::KartObject *, const EGG::Vector3f &) {}

@@ -65,7 +65,7 @@ void ItemObjKoura::initThrow(f32 speed, ItemTrail &trail, s32 bounces, bool forw
 
     m_limitBounces = bounces >= 0;
     m_bouncesLeft = m_limitBounces ? bounces : 0;
-    m_onWall = nullptr; // 0x807B62B8: only used by item-item and object collision (not ported)
+    m_onWall = static_cast<WallFunc>(&ItemObjKoura::onWallBounce);
     m_reflects = true;
     m_floats = floats;
 
@@ -280,7 +280,21 @@ void ItemObjKoura::calcMove(f32 targetSpeed) {
     }
 }
 
-/// @brief The wall reflection of 0x807B54F4 (and of the wall callback 0x807B62B8).
+/// @addr{0x807B62B8}
+/// @brief The shell's wall callback: it bounced off another item or a course object, whose push
+/// direction is `nrm`. A push without an upward part only turns the shell sideways. The sound is
+/// left out.
+void ItemObjKoura::onWallBounce(const EGG::Vector3f &nrm) {
+    if (nrm.y > 0.0f) {
+        reflectOffWall(nrm);
+    } else {
+        reflectOffWall(EGG::Vector3f(nrm.x, 0.0f, nrm.z));
+    }
+
+    m_vel = m_moveDir * m_speed;
+}
+
+/// @brief The wall reflection of 0x807B54F4 and of the wall callback 0x807B62B8.
 void ItemObjKoura::reflectOffWall(const EGG::Vector3f &nrm) {
     constexpr f32 UP_DAMPING = 0.7f;
 

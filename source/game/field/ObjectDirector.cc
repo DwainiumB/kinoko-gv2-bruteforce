@@ -4,6 +4,8 @@
 #include "game/field/ObjectDrivableDirector.hh"
 #include "game/field/obj/ObjectRegistry.hh"
 
+#include "game/item/ItemObj.hh"
+
 #include "game/kart/KartObject.hh"
 
 #include "game/system/CourseMap.hh"
@@ -111,6 +113,65 @@ size_t ObjectDirector::checkKartObjectCollision(Kart::KartObject *kartObj,
     return count;
 }
 
+/// @addr{0x8082ADBC}
+/// @brief Collects the course objects an item (a point with the given radius) touches, with what
+/// each hit does to the item and to the object; the objects react through processItemReactions and
+/// onItemCollision. The item's box collision search must have been made before.
+/// @return The number of hits, read back with collidingObject, hitDepth and itemReaction.
+size_t ObjectDirector::checkItemObjectCollision(f32 radius, Item::ItemObj *item,
+        const EGG::Vector3f &pos) {
+    m_itemCollision.set(radius, pos);
+    size_t count = 0;
+
+    while (ObjectCollidable *obj = BoxColManager::Instance()->getNextObject()) {
+        if (!obj->collision()) {
+            continue;
+        }
+
+        s16 kind = static_cast<s16>(item->kind());
+        s32 reactionOnItem = m_hitTableItem.reaction(m_hitTableItem.slot(obj->id()), kind);
+        s32 reactionOnObj =
+                m_hitTableItemObject.reaction(m_hitTableItemObject.slot(obj->id()), kind);
+
+        bool trailing = item->isTrailing();
+        if (reactionOnObj != ItemHit::None && reactionOnItem != ItemHit::Pass) {
+            // A held item is not bounced off objects.
+            if (reactionOnItem == ItemHit::Bounce && trailing) {
+                continue;
+            }
+        } else if (reactionOnItem == ItemHit::None || reactionOnItem == ItemHit::Pass ||
+                trailing) {
+            continue;
+        }
+
+        obj->calcCollisionTransform();
+        if (!m_itemCollision.check(*obj->collision(), m_hitDepths[count])) {
+            continue;
+        }
+
+        obj->processItemReactions(item, reactionOnItem, reactionOnObj);
+
+        // 0x8079FF14: a dropped item that does not survive hits is not reacted to; the caller
+        // makes it vanish.
+        if (!item->vanishesOnHit()) {
+            m_itemReactions[count] =
+                    obj->onItemCollision(item, reactionOnItem, reactionOnObj, m_hitDepths[count]);
+        }
+
+        m_collidingObjects[count] = obj;
+        ++count;
+    }
+
+    return count;
+}
+
+/// @addr{0x8082B42C}
+/// @brief The movement of a colliding object's collision shape this frame (zero without one).
+EGG::Vector3f ObjectDirector::collidingObjectTranslation(size_t idx) const {
+    const ObjectCollisionBase *collision = collidingObject(idx)->collision();
+    return collision ? collision->translation() : EGG::Vector3f::zero;
+}
+
 /// @addr{0x80782F74}
 /// @brief The generator course objects draw from: RaceManager's second one online, else the first.
 System::Random &ObjectDirector::random() const {
@@ -154,7 +215,8 @@ void ObjectDirector::DestroyInstance() {
 
 /// @addr{0x8082A38C}
 ObjectDirector::ObjectDirector()
-    : m_flowTable("ObjFlow.bin"), m_hitTableKart("GeoHitTableKart.bin"),
+    : m_flowTable("ObjFlow.bin"), m_hitTableItem("GeoHitTableItem.bin"),
+      m_hitTableItemObject("GeoHitTableItemObj.bin"), m_hitTableKart("GeoHitTableKart.bin"),
       m_hitTableKartObject("GeoHitTableKartObj.bin"), m_objects(MAX_UNIT_COUNT),
       m_calcObjects(MAX_UNIT_COUNT), m_collisionObjects(MAX_UNIT_COUNT), m_psea(nullptr),
       m_managedObjects(MAX_MANAGED_OBJECTS) {

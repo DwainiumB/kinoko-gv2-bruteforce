@@ -101,6 +101,23 @@ void ObjectCollidable::processKartReactions(Kart::KartObject *kartObj,
     }
 }
 
+/// @addr{0x8081F778}
+/// @brief Online and in Time Trials the item reactions stay as the tables give them; other
+/// offline races turn the object reactions 5 and 6 into 3 and 4 (director +0x54 / +0x55).
+void ObjectCollidable::processItemReactions(const Item::ItemObj * /*item*/,
+        s32 & /*reactionOnItem*/, s32 &reactionOnObj) {
+    const auto *objectDirector = ObjectDirector::Instance();
+    if (objectDirector->isOnline() || objectDirector->isTimeTrial()) {
+        return;
+    }
+
+    if (reactionOnObj == ItemHit::ObjHitRaceOnly) {
+        reactionOnObj = ItemHit::ObjHit;
+    } else if (reactionOnObj == ItemHit::ObjHitHardRaceOnly) {
+        reactionOnObj = ItemHit::ObjHitHard;
+    }
+}
+
 /// @addr{0x80681748}
 bool ObjectCollidable::checkCollision(ObjectCollisionBase *lhs, EGG::Vector3f &dist) {
     return lhs->check(*collision(), dist);

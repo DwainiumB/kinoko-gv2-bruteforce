@@ -26,6 +26,8 @@ protected:
     void calcFall() override;
     void breakByKart(Kart::KartObject *kartObj) override;
     void breakByKartUntimed(Kart::KartObject *kartObj) override;
+    void breakByItem(Item::ItemObj *item, const EGG::Vector3f &hitDepth) override;
+    void breakByItemUntimed(Item::ItemObj *item, const EGG::Vector3f &hitDepth) override;
 
 private:
     f32 m_homeY;     ///< +0xC0: the height it stands at.

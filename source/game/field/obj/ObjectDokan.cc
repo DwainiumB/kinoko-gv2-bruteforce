@@ -59,6 +59,22 @@ Kart::Reaction ObjectDokan::onCollision(Kart::KartObject * /*kartObj*/,
     return reactionOnKart;
 }
 
+/// @addr{0x80778CC4}
+/// @brief A hit pipe jumps up, as when a kart hits it (the kart's rumble is left out there).
+s32 ObjectDokan::onItemCollision(Item::ItemObj * /*item*/, s32 reactionOnItem, s32 reactionOnObj,
+        EGG::Vector3f & /*hitDepth*/) {
+    constexpr f32 INITIAL_VELOCITY = 100.0f;
+
+    if (reactionOnObj == ItemHit::ObjHit || reactionOnObj == ItemHit::ObjHitRaceOnly) {
+        if (!m_b0) {
+            m_b0 = true;
+            m_velocity = INITIAL_VELOCITY * EGG::Vector3f::ey;
+        }
+    }
+
+    return reactionOnItem;
+}
+
 /// @addr{0x807789BC}
 void ObjectDokan::calcFloor() {
     constexpr f32 PIPE_RADIUS = 100.0f;

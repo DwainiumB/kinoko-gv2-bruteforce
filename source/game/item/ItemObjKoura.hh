@@ -45,6 +45,7 @@ protected:
     void initThrow(f32 speed, ItemTrail &trail, s32 bounces, bool forward, bool floats);
     void calcMove(f32 targetSpeed);
     void reflectOffWall(const EGG::Vector3f &nrm);
+    void onWallBounce(const EGG::Vector3f &nrm);
     void calcGravity();
     void calcGravityY();
     void freeFromVelocity();

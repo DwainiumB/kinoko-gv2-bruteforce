@@ -206,6 +206,21 @@ void ObjectPylon::checkIntraCollision(const EGG::Vector3f &hitDepth) {
     }
 }
 
+/// @addr{0x8082DFD8}
+/// @brief An item knocks a standing or sliding pylon over at half strength; the item itself
+/// passes through (no reaction, no push). The sound is left out.
+s32 ObjectPylon::onItemCollision(Item::ItemObj * /*item*/, s32 /*reactionOnItem*/,
+        s32 /*reactionOnObj*/, EGG::Vector3f &hitDepth) {
+    constexpr f32 ITEM_HIT_FACTOR = 0.5f;
+
+    if (m_state == State::Idle || m_state == State::Moving) {
+        m_stateStartFrame = System::RaceManager::Instance()->timer();
+        startHit(ITEM_HIT_FACTOR, hitDepth);
+    }
+
+    return ItemHit::None;
+}
+
 /// @addr{0x8082E3F0}
 void ObjectPylon::startHit(f32 velFactor, EGG::Vector3f &hitDepth) {
     constexpr f32 ANG_VEL_SCALAR = 0.5f;

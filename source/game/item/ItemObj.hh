@@ -1,7 +1,7 @@
 #pragma once
 
 #include "game/field/KColData.hh"
-#include "game/field/ObjectCollisionBase.hh"
+#include "game/field/ObjectCollisionPoint.hh"
 
 #include <egg/core/BitFlag.hh>
 #include <egg/math/Quat.hh>
@@ -166,6 +166,13 @@ public:
         return m_owner;
     }
 
+    /// @brief The player this item's hits are credited to: its owner, or 12 (nobody) once a hit
+    /// made its owner drop it.
+    [[nodiscard]] u8 hitOwner() const {
+        constexpr u8 NO_PLAYER = 12;
+        return m_flags.onBit(eFlags::NoOwner) ? NO_PLAYER : m_owner;
+    }
+
     [[nodiscard]] const EGG::Vector3f &pos() const {
         return m_pos;
     }
@@ -198,6 +205,13 @@ public:
         return m_boxColUnit != nullptr;
     }
 
+    /// @addr{0x8079FF14}
+    /// @brief A dropped item that cannot survive hits: any hit makes it vanish.
+    [[nodiscard]] bool vanishesOnHit() const {
+        return m_flags2.offBit(eFlags2::Unk6) && m_flags.onBit(eFlags::Dropped) &&
+                !properties().survivesHits;
+    }
+
     [[nodiscard]] const ItemObjProperties &properties() const;
     [[nodiscard]] static const ItemObjProperties &Properties(ItemObjKind kind);
     /// @endGetters
@@ -225,6 +239,7 @@ protected:
     void calcRelease();
     void placeInDriverHand(bool forward);
     void calcItemCollision();
+    void calcObjectCollision();
     void calcItemPairFree(ItemObj *other);
     void calcItemPair(ItemObj *other);
     [[nodiscard]] s32 itemPairResponse(const ItemObj *other) const;
@@ -296,35 +311,8 @@ protected:
     bool m_spinDir;              ///< +0x198
     s32 m_breakTimer;            ///< +0x19C
 
-    /// @brief The point collider for the item-vs-kart convex hull test (the game keeps one
-    /// shared instance at 0x809C3628, vtable 0x808D198C).
-    class PointCollision : public Field::ObjectCollisionBase {
-    public:
-        PointCollision() : m_radius(0.0f) {}
-        ~PointCollision() override = default;
-
-        void set(f32 radius, const EGG::Vector3f &pos) {
-            m_radius = radius;
-            m_pos = pos;
-        }
-
-        void transform(const EGG::Matrix34f & /*mat*/, const EGG::Vector3f & /*scale*/) override {
-        }
-        void transform(const EGG::Matrix34f & /*mat*/, const EGG::Vector3f & /*scale*/,
-                const EGG::Vector3f & /*speed*/) override {}
-        const EGG::Vector3f &getSupport(const EGG::Vector3f & /*v*/) const override {
-            return m_pos;
-        }
-        f32 getBoundingRadius() const override {
-            return m_radius;
-        }
-
-    private:
-        f32 m_radius;        ///< +0x1C
-        EGG::Vector3f m_pos; ///< +0x20
-    };
-
-    static PointCollision s_pointCollision;
+    /// @brief The point collider for the item-vs-kart convex hull test (0x809C3628).
+    static Field::ObjectCollisionPoint s_pointCollision;
 };
 
 } // namespace Item
