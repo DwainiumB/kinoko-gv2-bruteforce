@@ -204,10 +204,17 @@ RaceManager::Player::Player() {
     m_idx = 0;
     m_finished = false;
     m_inputs = &KPadDirector::Instance()->playerInput(0);
+    m_startRandomBit = 0; // The game leaves it unset until init.
 }
 
 /// @addr{0x80534194}
 void RaceManager::Player::init(u8 idx) {
+    constexpr u32 START_BIT_RANGE = 10;
+
+    // 0x805341C4: the first thing each player's init does is one draw from the race's second
+    // generator. The players are initialised in index order.
+    m_startRandomBit = 1u << (RaceManager::Instance()->random2().getU32(START_BIT_RANGE) + 1);
+
     m_idx = idx;
     // The RaceManager constructor (0x805327A0) starts each rank at the race config's grid place.
     u8 startPlacement = RaceConfig::Instance()->raceScenario().players[idx].startPlacement;

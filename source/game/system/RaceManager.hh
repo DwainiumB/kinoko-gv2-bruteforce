@@ -122,6 +122,10 @@ public:
         const KPad *m_inputs;
         u8 m_idx;
         bool m_finished;
+        /// +0x04 and +0x4C (the same value): one bit from 1 << 1 to 1 << 10, drawn from the
+        /// second generator at race start. No code in the game reads it; the only getter
+        /// (0x80534934, the bit index with 10 read as 0) has no callers.
+        u32 m_startRandomBit;
     };
 
     enum class Stage {
