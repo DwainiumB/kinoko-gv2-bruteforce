@@ -308,6 +308,20 @@ breaks on wooden box 1 at 6802, the box breaks and drops its mushroom then (cred
 off a small tree; red shells break on trees. A confirming recording would need a shell or banana thrown into a wooden
 box or tree (and ideally a red shell bouncing off another item), logged with the item objects.
 
+## Race start: the per-player draw from the second generator (ported 2026-11-04, uncommitted)
+
+`RaceManager::Player::init` (0x80534194) starts with one `getU32(10)` on the race's second generator and keeps
+`1 << (r + 1)` at +0x04 and +0x4C; `RaceManager::init` (0x80532F88) inits the players in index order. Kinoko now
+makes the same draw at the same place (`m_startRandomBit`). Nothing in the game reads the value (its only getter,
+0x80534934, has no caller).
+
+**Verified**: all five recordings unchanged (no kart differences; items 15,400 / 10,777 / 10,638), 13/13 suite, 56/56
+ghosts. The dumps also hold the second generator's state: at race load the game has drawn 30 times on DS Delfino
+Square and 434 times on Luigi Circuit, and it keeps drawing about once every 100 frames in the race; Kinoko draws 20
+and 22 (item boxes and players). The difference is objects Kinoko does not simulate (visual), so the second generator
+cannot be compared frame by frame, and offline nothing physical reads it. A confirming recording is not possible
+offline for the same reason: the value has no reader.
+
 ## Server-controlled random numbers (for lockstep online)
 
 What draws from the race's two generators in Kinoko today: the first (RaceManager +0x04) feeds offline item rolls

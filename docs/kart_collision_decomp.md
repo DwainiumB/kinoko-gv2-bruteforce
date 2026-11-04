@@ -869,3 +869,36 @@ differences, items 15,400 / 10,777 / 10,638 bit-exact, 13/13 suite, 56/56 ghosts
 breaks, and the box breaks and drops a mushroom credited to the thrower at 6802 (the kart breaks it at 6808 without the
 shell) and the kart drives through at full speed; a green shell bounces off a small tree (velocity (204, -2, -20) to
 (171, 0, -113), pushed out by the hit depth); red shells break on trees.
+
+## Race start: one draw per player from the second generator (twelfth pass, 2026-11-04)
+
+```c
+// RaceManager::init 0x80532F88 (called from RaceScene::initEngines 0x8055472C, after KartObjectManager::init):
+//   flags +0x1C / +0x1D / +0x20 / +0x30, slipstream turn +0x38 = 0x80000000, KPadDirector::lockGhostProxies,
+//   for (i = 0; i < RaceConfig player count (+0x24); ++i) Player::init(players +0x0C [i]);
+//   then the game mode's vtable +0x1C.
+// RaceManager::Player::init 0x80534194:
+//   +0x22 = 0 (u16);
+//   r = RaceManager +0x08 (the second generator)->getU32(10);   // 0x805555CC, at 0x805341C4
+//   +0x4C = +0x04 = 1 << (r + 1);                                // one bit from 2 to 1024
+//   then the checkpoint search (findSector 0x80511500 from the kart's position, jugem index), and
+//   +0x2C = +0x30 = 0, +0x50 = 0 (u16), +0x52 = 13, +0x34 = 7, +0x38 |= 1.
+// Nothing reads +0x04 or +0x4C: the only getter, 0x80534934 (popcount 0x800850B0, then the bit index, 0 when above
+//   9), has no caller and no pointer to it anywhere in the image; no RaceManager::Player function loads either word.
+// Of the code Kinoko has, the second generator's other offline draws are the item boxes' spin phases (constructor
+//   0x808285B0, RaceScene::createEngines 0x80554208, so before the race init). After it, offline VS draws only from
+//   the first generator (ObjectDirector 0x80782F74 and ItemRaceFlags 0x807BD718 use the second one online, and the
+//   item code in Time Trials, where no recorded ghost breaks or drops an item).
+```
+
+**Second generator in the dumps** (the logger records its state, `rng["2"]` words 3 and 4): at race load the game
+has drawn 30 times on DS Delfino Square (`test5`) and 434 times on the Luigi Circuit recordings (`test4`), then 2
+more on each of two intro frames and about one every 100 frames through the countdown and race. Kinoko draws 20 and
+22 (the item boxes and now the two players). The rest comes from objects Kinoko does not simulate (visual-only course
+objects and effects), so Kinoko's second generator cannot follow the game's; offline nothing that moves a kart or an
+item reads it, which is why every recording matches. Online it would matter (`ObjectDirector::random` and the item
+code use it there).
+
+**Measured**: Kinoko now makes the same draws in the same order (players 0 to n-1, each before its checkpoint
+search) and keeps the value as `RaceManager::Player::m_startRandomBit`. All five recordings stay bit-exact (no
+kart differences, items unchanged), 13/13 suite, 56/56 ghosts.
