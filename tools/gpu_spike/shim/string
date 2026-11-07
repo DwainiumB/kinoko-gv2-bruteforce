@@ -1,0 +1,11 @@
+#pragma once
+// Stub std::string / std::format: only debug-print code uses them; on the GPU they do nothing.
+namespace std {
+struct string {
+    constexpr string() {}
+    constexpr string(const char *) {}
+    const char *c_str() const { return ""; }
+    string operator+(const string &) const { return {}; }
+};
+template <class... A> string format(const char *, A &&...) { return {}; }
+}

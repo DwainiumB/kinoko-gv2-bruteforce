@@ -7,6 +7,7 @@
 #include <abstract/File.hh>
 #include <egg/core/Heap.hh>
 
+#include <game/field/ObjectDirector.hh>
 #include <game/item/ItemDirector.hh>
 #include <game/kart/KartMove.hh>
 #include <game/kart/KartObjectManager.hh>
@@ -62,6 +63,36 @@ void KReplaySystem::openDump() {
 /// state, so a training pair is (state of row t-1, input of row t).
 void KReplaySystem::dumpFrame() {
     if (m_dumpFile) {
+        // Optional object trace (MMM cow check): KINOKO_OBJ_DUMP=path, KINOKO_OBJ_ID=hex id (default
+        // 0x193 = cow). One row per matching object per frame: frame,index,id,x,y,z. Read-only.
+        static FILE *objFile = nullptr;
+        static bool objInit = false;
+        static u32 objId = 0x193;
+        if (!objInit) {
+            objInit = true;
+            if (const char *path = getenv("KINOKO_OBJ_DUMP")) {
+                objFile = fopen(path, "wb");
+                if (const char *id = getenv("KINOKO_OBJ_ID")) {
+                    objId = static_cast<u32>(strtoul(id, nullptr, 16));
+                }
+                if (objFile) {
+                    fputs("frame,index,id,x,y,z\n", objFile);
+                }
+            }
+        }
+        if (objFile) {
+            if (auto *objDir = Field::ObjectDirector::Instance()) {
+                int idx = 0;
+                for (auto *obj : objDir->objects()) {
+                    u32 id = static_cast<u32>(obj->id());
+                    if (objId == 0 || id == objId) {
+                        const auto &p = obj->pos();
+                        fprintf(objFile, "%u,%d,%u,%.3f,%.3f,%.3f\n", m_dumpFrame, idx, id, p.x, p.y, p.z);
+                    }
+                    ++idx;
+                }
+            }
+        }
         Host::WriteStateRow(m_dumpFile, m_dumpFrame++);
     }
 }

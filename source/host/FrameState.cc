@@ -25,6 +25,8 @@ void WriteStateHeader(FILE *file, const char *prefix) {
     for (int i = 0; i < PATH_LOOKAHEAD; ++i) {
         fprintf(file, ",pmx%d,pmz%d,plx%d,plz%d,prx%d,prz%d", i, i, i, i, i, i);
     }
+    // per tire: the KCL base type of the floor it touches (-1 = no floor contact) and whether it touches a wall
+    fputs(",tires,floor0,floor1,floor2,floor3,wall0,wall1,wall2,wall3", file);
     fputs("\n", file);
 }
 
@@ -104,6 +106,28 @@ void WriteStateRow(FILE *file, u32 frame, const char *prefix) {
             fputs(",0,0,0,0,0,0", file);
         }
         cp = (cp && cp->nextCount()) ? cp->nextPoint(0) : nullptr;
+    }
+
+    // Per-tire contact (the same data the web bridge exposes through kinoko_get_floor).
+    {
+        const u16 count = object->tireCount();
+        int floorType[4] = {-1, -1, -1, -1};
+        int wall[4] = {0, 0, 0, 0};
+        for (u16 i = 0; i < count && i < 4; ++i) {
+            const auto &cd = object->collisionData(i);
+            if (cd.bFloor && cd.closestFloorFlags) {
+                u32 mask = static_cast<u32>(cd.closestFloorFlags);
+                int type = 0;
+                while (!(mask & 1)) {
+                    mask >>= 1;
+                    ++type;
+                }
+                floorType[i] = type;
+            }
+            wall[i] = cd.bWall ? 1 : 0;
+        }
+        fprintf(file, ",%d,%d,%d,%d,%d,%d,%d,%d,%d", static_cast<int>(count), floorType[0], floorType[1],
+                floorType[2], floorType[3], wall[0], wall[1], wall[2], wall[3]);
     }
     fputs("\n", file);
     fflush(file);

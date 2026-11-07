@@ -1,0 +1,36 @@
+# rGV2 L1 fast block hit candidate gv2_L1hit_sircorvid_S3_superhops.rkg; orig = sircorvid_20.444.rkg; contact row 842 (input 670) | EV@contact 66.0 EV@850 54.9 | yaw@844 -116.87 @contact -109.08 | ahead@844 +2.553f lat +6.0 | ahead+20 +3.172f (lat +61.7) ahead+30 +3.176f
+# input_frame = index in the rkg input stream (0 = first countdown frame); race_frame = input_frame - 240 (0 = timer start)
+# face bits: 1=A 2=B 4=item 8=drift; stick -7..7; only changed frames listed
+input_frame,race_frame,time_s,orig_face,new_face,orig_stick_x,new_stick_x,orig_stick_y,new_stick_y,orig_trick,new_trick
+605,365,6.089,1,1,0,0,7,-2,none,none
+613,373,6.223,11,11,4,4,7,-1,none,none
+655,415,6.924,11,11,7,7,7,2,none,none
+695,455,7.591,1,11,7,7,7,7,none,none
+696,456,7.608,11,11,4,7,7,7,none,none
+697,457,7.624,11,11,-1,-7,7,7,none,none
+698,458,7.641,11,11,7,-1,7,7,none,none
+699,459,7.658,11,11,7,-6,7,7,none,none
+709,469,7.824,11,1,7,7,-7,-7,none,none
+710,470,7.841,11,1,7,7,0,0,none,none
+711,471,7.858,1,11,7,6,0,0,none,none
+712,472,7.875,11,11,7,2,0,0,none,none
+729,489,8.158,11,11,7,7,-7,5,none,none
+733,493,8.225,11,11,7,-1,-7,6,none,none
+741,501,8.358,1,11,7,3,0,0,none,none
+742,502,8.375,1,1,7,2,0,0,none,none
+743,503,8.392,1,1,7,7,0,0,up,none
+747,507,8.458,11,11,7,7,7,2,none,none
+754,514,8.575,11,1,-1,6,7,7,none,none
+756,516,8.609,11,11,7,-4,7,7,none,none
+760,520,8.675,11,11,7,7,7,-7,none,none
+770,530,8.842,11,11,7,2,0,0,none,none
+771,531,8.859,11,11,-2,-1,7,7,none,none
+784,544,9.076,11,11,7,-1,0,0,none,none
+801,561,9.359,11,11,7,-1,7,7,none,none
+802,562,9.376,11,11,7,0,7,7,none,none
+808,568,9.476,11,11,0,5,7,7,none,none
+812,572,9.543,11,1,7,7,0,0,none,none
+813,573,9.560,11,1,7,7,0,0,none,none
+827,587,9.793,1,1,0,0,0,0,up,none
+828,588,9.810,1,1,0,-7,0,0,none,none
+841,601,10.027,1,1,7,0,0,0,none,none

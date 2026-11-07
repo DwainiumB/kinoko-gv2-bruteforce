@@ -1,0 +1,11 @@
+# rGV2 L1 fast block hit candidate evoD_0.rkg; orig = rGV2_22.000_slimpanda_L1_with_L3_movement_PENDING.rkg; contact row 845 (input 673) | EV@contact 63.7 EV@850 49.1 | yaw@844 -110.58 @contact -113.42 | ahead@844 +0.097f lat -11.0 | ahead+20 +0.892f (lat +110.0) ahead+30 +0.875f
+# input_frame = index in the rkg input stream (0 = first countdown frame); race_frame = input_frame - 240 (0 = timer start)
+# face bits: 1=A 2=B 4=item 8=drift; stick -7..7; only changed frames listed
+input_frame,race_frame,time_s,orig_face,new_face,orig_stick_x,new_stick_x,orig_stick_y,new_stick_y,orig_trick,new_trick
+606,366,6.106,1,1,5,5,7,5,none,none
+626,386,6.440,3,3,7,7,-1,0,none,none
+653,413,6.890,3,3,7,7,-4,-6,none,none
+659,419,6.990,3,3,7,7,-7,-6,none,none
+660,420,7.007,3,3,7,7,7,6,none,none
+666,426,7.107,3,3,7,7,7,4,none,none
+673,433,7.224,3,3,7,6,0,0,none,none

@@ -1,0 +1,74 @@
+#pragma once
+// Minimal device std::list: doubly linked, nodes from the given allocator (EGG::Allocator in the engine).
+#include <cuda/std/cstddef>
+#include <cuda/std/iterator>
+namespace std {
+template <class T> struct allocator {
+    using value_type = T;
+    T *allocate(::cuda::std::size_t n) { return static_cast<T *>(::operator new(n * sizeof(T))); }
+    void deallocate(T *p, ::cuda::std::size_t) { ::operator delete(p); }
+};
+template <class A, class U> struct list_rebind;
+template <template <class> class A, class T, class U> struct list_rebind<A<T>, U> { using type = A<U>; };
+template <class T, class Alloc = allocator<T>> class list {
+    struct NodeBase { NodeBase *prev, *next; };
+    struct Node : NodeBase { T value; };
+    NodeBase m_head{nullptr, nullptr};  // lazily linked to itself so the list is constant-initializable  // sentinel (value unused)
+    ::cuda::std::size_t m_size = 0;
+    Alloc m_alloc;
+    Node *newNode(const T &v) {
+        // same node size and allocator as libstdc++ (prev, next, value), so the heap layout matches the CPU build
+        Node *n = typename list_rebind<Alloc, Node>::type{}.allocate(1);
+        new (&n->value) T(v);
+        return n;
+    }
+public:
+    struct iterator {
+        using iterator_category = ::cuda::std::bidirectional_iterator_tag;
+        using value_type = T;
+        using difference_type = long long;
+        using pointer = T *;
+        using reference = T &;
+        NodeBase *n;
+        iterator operator++(int) { iterator t = *this; n = n->next; return t; }
+        T &operator*() const { return static_cast<Node *>(n)->value; }
+        T *operator->() const { return &static_cast<Node *>(n)->value; }
+        iterator &operator++() { n = n->next; return *this; }
+        iterator &operator--() { n = n->prev; return *this; }
+        bool operator==(const iterator &o) const { return n == o.n; }
+        bool operator!=(const iterator &o) const { return n != o.n; }
+    };
+    using const_iterator = iterator;
+    constexpr list() {}
+    void lazy() const { if (!m_head.next) { auto *h = const_cast<NodeBase *>(&m_head); h->prev = h->next = h; } }
+    explicit constexpr list(const Alloc &) {}
+    // no destructor: device globals must be trivially destructible (the engine never destroys these lists)
+    iterator begin() { lazy(); return {m_head.next}; }
+    iterator end() { lazy(); return {&m_head}; }
+    iterator begin() const { lazy(); return {m_head.next}; }
+    iterator end() const { return {const_cast<NodeBase *>(&m_head)}; }
+    bool empty() const { return m_size == 0; }
+    ::cuda::std::size_t size() const { return m_size; }
+    T &front() { return static_cast<Node *>(m_head.next)->value; }
+    T &back() { return static_cast<Node *>(m_head.prev)->value; }
+    iterator insert(iterator pos, const T &v) {
+        lazy();
+        Node *n = newNode(v);
+        n->next = pos.n; n->prev = pos.n->prev; pos.n->prev->next = n; pos.n->prev = n; ++m_size;
+        return {n};
+    }
+    void push_back(const T &v) { insert(end(), v); }
+    void push_front(const T &v) { insert(begin(), v); }
+    template <class... A> T &emplace_back(A &&...a) { push_back(T(static_cast<A &&>(a)...)); return back(); }
+    iterator erase(iterator pos) {
+        NodeBase *b = pos.n, *nx = b->next;
+        b->prev->next = nx; nx->prev = b->prev; static_cast<Node *>(b)->value.~T();
+        typename list_rebind<Alloc, Node>::type{}.deallocate(static_cast<Node *>(b), 1); --m_size;
+        return {nx};
+    }
+    void pop_front() { erase(begin()); }
+    void pop_back() { erase(iterator{m_head.prev}); }
+    void remove(const T &v) { for (auto it = begin(); it != end();) { if (*it == v) it = erase(it); else ++it; } }
+    void clear() { while (!empty()) pop_front(); }
+};
+}

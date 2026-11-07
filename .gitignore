@@ -23,22 +23,14 @@ build-cov/
 build-*/
 
 # Local TAS-search tooling (kept on disk, not part of the web player repo)
-source/host/KBruteSystem.*
-source/host/KDriveSystem.*
-source/host/KSearchSystem.*
 tools/beam_search*.py
-tools/brute_force.py
 tools/brute_gui*
 tools/dagger.py
 tools/drive_policy.py
-tools/evolve.py
 tools/fast_features.py
 tools/gpu_*.py
-tools/gpu_spike/
-tools/kinoko_search.py
 tools/policy_net.py
 tools/state_extent.py
-tools/surrogate*.py
 tools/sweep_monitor.py
 tools/train_*.py
 tools/scratch_k.py
@@ -68,8 +60,16 @@ samples/_editor_tmp.rkg
 
 # Game-derived or very large local data; never committed
 samples/data/
-samples/tracks/
+samples/tracks/*
+!samples/tracks/ghost-valley-2/
 Race/
 
 # Claude Code local settings
 .claude/
+
+# gv2-bruteforce branch: GPU engine build outputs (expanded game archives, cubins) never get committed
+tools/gpu_spike/out/
+tools/gpu_spike/xsrc/
+tools/gpu_spike/*.bak*
+tools/*.bak*
+tools/surrogate*.npz

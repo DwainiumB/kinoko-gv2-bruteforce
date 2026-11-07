@@ -1,0 +1,17 @@
+#pragma once
+#include <cuda/std/functional>
+namespace std { using namespace ::cuda::std; }
+// Minimal std::function: a plain function pointer (the engine only stores captureless callbacks).
+namespace std {
+template <class F> class function;
+template <class R, class... A> class function<R(A...)> {
+    R (*m_fn)(A...) = nullptr;
+public:
+    constexpr function() = default;
+    constexpr function(decltype(nullptr)) {}
+    template <class F> function(F f) : m_fn(f) {}
+    R operator()(A... a) const { return m_fn(static_cast<A &&>(a)...); }
+    explicit operator bool() const { return m_fn != nullptr; }
+    bool operator==(decltype(nullptr)) const { return m_fn == nullptr; }
+};
+}

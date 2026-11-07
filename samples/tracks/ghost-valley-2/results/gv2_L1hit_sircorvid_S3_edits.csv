@@ -1,0 +1,7 @@
+# rGV2 L1 fast block hit candidate gv2_L1hit_sircorvid_S3.rkg; orig = sircorvid_20.444.rkg; contact row 842 (input 670) | EV@contact 66.0 EV@850 54.9 | yaw@844 -116.87 @contact -109.08 | ahead@844 +2.553f lat +6.0 | ahead+20 +3.172f (lat +61.7) ahead+30 +3.177f
+# input_frame = index in the rkg input stream (0 = first countdown frame); race_frame = input_frame - 240 (0 = timer start)
+# face bits: 1=A 2=B 4=item 8=drift; stick -7..7; only changed frames listed
+input_frame,race_frame,time_s,orig_face,new_face,orig_stick_x,new_stick_x,orig_stick_y,new_stick_y,orig_trick,new_trick
+605,365,6.089,1,1,0,0,7,-2,none,none
+613,373,6.223,11,11,4,4,7,-1,none,none
+655,415,6.924,11,11,7,7,7,2,none,none

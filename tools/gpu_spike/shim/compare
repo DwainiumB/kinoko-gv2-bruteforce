@@ -1,0 +1,30 @@
+#pragma once
+// Minimal <compare>: what the compiler needs for built-in <=> on integers to yield std::strong_ordering.
+namespace std {
+struct strong_ordering {
+    signed char v;
+    static const strong_ordering less, equal, equivalent, greater;
+    friend constexpr bool operator==(strong_ordering a, int) { return a.v == 0; }
+    friend constexpr bool operator!=(strong_ordering a, int) { return a.v != 0; }
+    friend constexpr bool operator<(strong_ordering a, int) { return a.v < 0; }
+    friend constexpr bool operator>(strong_ordering a, int) { return a.v > 0; }
+    friend constexpr bool operator<=(strong_ordering a, int) { return a.v <= 0; }
+    friend constexpr bool operator>=(strong_ordering a, int) { return a.v >= 0; }
+    friend constexpr bool operator==(strong_ordering, strong_ordering) = default;
+};
+struct partial_ordering {
+    signed char v;  // -1 less, 0 equivalent, 1 greater, 2 unordered
+    static const partial_ordering less, equivalent, greater, unordered;
+    friend constexpr bool operator==(partial_ordering a, int) { return a.v == 0; }
+    friend constexpr bool operator!=(partial_ordering a, int) { return a.v != 0; }
+    friend constexpr bool operator<(partial_ordering a, int) { return a.v == -1; }
+    friend constexpr bool operator>(partial_ordering a, int) { return a.v == 1; }
+    friend constexpr bool operator<=(partial_ordering a, int) { return a.v == -1 || a.v == 0; }
+    friend constexpr bool operator>=(partial_ordering a, int) { return a.v == 1 || a.v == 0; }
+    friend constexpr bool operator==(partial_ordering, partial_ordering) = default;
+};
+inline constexpr partial_ordering partial_ordering::less{-1}, partial_ordering::equivalent{0},
+    partial_ordering::greater{1}, partial_ordering::unordered{2};
+inline constexpr strong_ordering strong_ordering::less{-1}, strong_ordering::equal{0},
+    strong_ordering::equivalent{0}, strong_ordering::greater{1};
+}

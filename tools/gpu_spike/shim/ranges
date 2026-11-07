@@ -1,0 +1,10 @@
+#pragma once
+#include <cuda/std/ranges>
+namespace std { using namespace ::cuda::std; }
+#include <cuda/std/__algorithm/upper_bound.h>
+#ifndef KINOKO_SHIM_RANGES_UPPER_BOUND
+#define KINOKO_SHIM_RANGES_UPPER_BOUND
+namespace std::ranges {
+template <class It, class T> It upper_bound(It first, It last, const T &value) { return ::cuda::std::upper_bound(first, last, value); }
+}
+#endif
