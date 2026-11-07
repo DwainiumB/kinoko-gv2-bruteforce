@@ -1,6 +1,6 @@
 # rGV2 Ultra block-hit brute force (Kinoko GPU search)
 
-> **Not the official Kinoko.** This repo is an unofficial copy of [Kinoko](https://github.com/vabold/Kinoko) by vabold and its
+> This repo is an unofficial copy of [Kinoko](https://github.com/vabold/Kinoko) by vabold, Malleo and its
 > contributors (MIT), plus a web-player fork and the search tools described below. For Kinoko itself, use the upstream repo.
 > Kinoko's own README (building, extracting the game files) is kept at [docs/KINOKO_README.md](docs/KINOKO_README.md).
 
