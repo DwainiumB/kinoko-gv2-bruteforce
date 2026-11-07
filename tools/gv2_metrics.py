@@ -1,50 +1,46 @@
 #!/usr/bin/env python3
-"""Post-hit metrics for GV2 block hits from CPU replay dumps.
+"""Print how candidates move after each block hit, compared with the reference, from CPU replay dumps.
 
-ahead(t) = along-track displacement of the candidate at row t from the reference at row t + shift, divided by the
-reference's speed there, in frames (positive = further along the reference path)."""
-import csv, math, sys
+For each candidate dump (optionally `path@shift`, where shift = how many rows later the candidate's hit happens than
+the reference's), finds its first block contact in the L1, L2 or L3 hit window and prints, at contact +0/10/20/30/40
+rows: frames ahead of the reference (see gv2_common.ahead_of_reference_row), lateral offset, yaw, EV and speed.
 
-def load(p):
-    return list(csv.DictReader(open(p)))
+    python tools/gv2_metrics.py runs/gv2/gv2_27818.csv cand_cpu.csv other_cpu.csv@1
+"""
+import sys
 
-def P(r):
-    return float(r['px']), float(r['pz'])
+import gv2_common as gv2
 
-def yaw(r):
-    qx, qy, qz, qw = (float(r[k]) for k in ('qx', 'qy', 'qz', 'qw'))
-    return math.degrees(math.atan2(2 * (qx * qz + qw * qy), 1 - 2 * (qx * qx + qy * qy)))
+HIT_WINDOWS = ((780, 900), (1340, 1460), (1890, 2010))   # rows searched for the L1, L2 and L3 block contact
+ROWS_AFTER_CONTACT = (0, 10, 20, 30, 40)
 
-def ev(r):
-    return math.hypot(float(r['evx']), float(r['evz']))
 
-def ahead(cand, ci, ref, ri):
-    (x, z), (x0, z0), (x1, z1) = P(cand[ci]), P(ref[ri]), P(ref[ri + 1])
-    dx, dz = x1 - x0, z1 - z0
-    sp = math.hypot(dx, dz)
-    along = ((x - x0) * dx + (z - z0) * dz) / sp
-    lat = ((x - x0) * dz - (z - z0) * dx) / sp
-    return along / sp, lat
+def report(reference, candidate, label, shift):
+    for first, end in HIT_WINDOWS:
+        contact = gv2.first_contact_row(candidate, first, end)
+        if contact is None or not (first <= contact - shift < end + 600):
+            continue
+        lines = [f"{label}@{shift} contact row {contact}"]
+        for after in ROWS_AFTER_CONTACT:
+            row = contact + after
+            reference_row = row - shift
+            if reference_row + 1 < len(reference):
+                ahead, lateral = gv2.ahead_of_reference_row(candidate[row], reference[reference_row], reference[reference_row + 1])
+            else:
+                ahead, lateral = float("nan"), 0
+            lines.append(f"+{after}: ahead {ahead:+.3f}f lat {lateral:+6.1f} yaw {gv2.yaw_degrees(candidate[row]):8.2f} "
+                         f"ev {gv2.horizontal_ev(candidate[row]):5.1f} sp {float(candidate[row]['speed']):5.1f}")
+        print("\n   ".join(lines))
+        return
 
-def contact(rows, lo, hi):
-    for i in range(lo, hi):
-        if int(rows[i]['flags']) & 0x400:
-            return i
-    return None
 
-if __name__ == '__main__':
-    A = load(sys.argv[1])
+def main():
+    reference = gv2.load_dump(sys.argv[1])
     for spec in sys.argv[2:]:
-        path, shift = spec.split('@') if '@' in spec else (spec, '0')
-        shift = int(shift)
-        B = load(path) if path != 'self' else A
-        for lo, hi in ((780, 900), (1340, 1460), (1890, 2010)):
-            c = contact(B, lo + 0 if shift == 0 else lo, hi)
-            if c is None or not (lo <= c - shift + (0) < hi + 600):
-                continue
-            out = [f"{path}@{shift} contact row {c}"]
-            for k in (0, 10, 20, 30, 40):
-                a, lat = ahead(B, c + k, A, c + k - shift) if c + k - shift + 1 < len(A) else (float('nan'), 0)
-                out.append(f"+{k}: ahead {a:+.3f}f lat {lat:+6.1f} yaw {yaw(B[c + k]):8.2f} ev {ev(B[c + k]):5.1f} sp {float(B[c + k]['speed']):5.1f}")
-            print('\n   '.join(out))
-            break
+        label, shift = spec.split("@") if "@" in spec else (spec, "0")
+        candidate = gv2.load_dump(label) if label != "self" else reference
+        report(reference, candidate, label, int(shift))
+
+
+if __name__ == "__main__":
+    main()

@@ -8,12 +8,12 @@ Combo: Funky Kong (char 22) + Standard Bike L (veh 20), course 25.
   Local Kinoko replay: lap 2 at timer 9409-9426 ms, lap 3 at 18618-18635, finished at row 2079. In sync.
 - `rGV2_28.165_aoiro.rkg`: the old run without fast block hits on L2/L3 (9.447 / 9.458 / 9.260).
 - `rGV2_22.000_slimpanda_L1_with_L3_movement_PENDING.rkg`: the L3 movement copied onto L1 (1049 input frames).
-  This is the job sam never ran. Inputs split from the 27.818 at dump row 661 (input frame 490).
+  This is the job sam never ran. Inputs split from the 27.818 at dump row 661 (input frame 489).
   It FAILS the fast hit: at row 850 EV is 16 against 44 on the 27.818.
 - `sam_L1hit_candidate_24.rkg` / `_25.rkg`: sam's L1 hit candidates 24/25 (~0.4 f ahead 20 f after the block, no superhops fitted).
 
-Dump rows = rkg input frame + 171. sam's "race_frame" = input_frame - 240 (timer frames).
-The fast L1 block hit is at input frame ~676 (timer frame ~436). The L2 contact is at timer frame 988.
+rkg input frame = dump row - 172. sam's "race_frame" = input_frame - 240 (timer frames). (Corrected 2026-11-07: this note first said row - 171.)
+The 27.818's fast L1 block hit is at row 846 = input frame 674 = race frame 434 (the thread's "frame 676" counts differently). The L2 contact is at race frame 988.
 
 ## What sam (fable5mkw) did
 - Simulated annealing on Kinoko savestates, 28 CPU workers, edits to whole-frame inputs. Also a GPU port: ~2.7M kart-frames/s on an RTX 5060 Ti, with a ~12 KB sim-state snapshot.

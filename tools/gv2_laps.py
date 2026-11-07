@@ -1,31 +1,41 @@
 #!/usr/bin/env python3
-"""Lap-line crossings (sub-frame, from completion) and lap timer values of GV2 CPU dumps vs the 27.818 dump.
+"""Lap-line crossings of GV2 CPU replay dumps, compared with the first dump (the reference).
+
+For each dump: the sub-frame row where race completion reaches 2.0, 3.0 and 4.0 (L1 line, L2 line, finish) and the
+difference in frames from the reference, then frames ahead / lateral offset / EV at a few rows around the lap 2 entry
+and the L2 hit.
 
     python tools/gv2_laps.py runs/gv2/gv2_27818.csv cand_cpu.csv ...
 """
-import csv, sys
-sys.path.insert(0, __import__("os").path.dirname(__file__))
-from gv2_metrics import ev
-from gv2_verify import path_ahead
+import sys
 
-def crossings(R):
-    out = []
-    comp = [float(r["completion"]) for r in R]
-    for target in (2.0, 3.0, 4.0):
-        i = next((k for k in range(900, len(R)) if comp[k] >= target and comp[k - 1] < target and comp[k] - comp[k - 1] < 0.5), None)
-        out.append((i - 1) + (target - comp[i - 1]) / (comp[i] - comp[i - 1]) if i else float("nan"))
-    return out
+import gv2_common as gv2
 
-A = list(csv.DictReader(open(sys.argv[1])))
-ca = crossings(A)
-for p in sys.argv[1:]:
-    B = list(csv.DictReader(open(p)))
-    cb = crossings(B)
-    s = " | ".join(f"L{k + 1} line {x:8.2f} ({x - y:+.2f}f)" for k, (x, y) in enumerate(zip(cb, ca)))
-    extra = ""
-    for r in (976, 1000, 1396, 1398, 1420):
-        if r < len(B):
-            ah, lat = path_ahead(B, r, A)
-            extra += f" | @{r} ahead {ah:+.2f} lat {lat:+.0f} ev {ev(B[r]):.1f}"
-    fin = next((i for i in range(len(B)) if int(B[i]["stage"]) > 2), None) if "stage" in B[0] else None
-    print(f"{p}: {s}{extra} | rows {len(B)}")
+LINES = (2.0, 3.0, 4.0)
+CHECK_ROWS = (976, 1000, 1396, 1398, 1420)
+
+
+def lap_crossings(rows):
+    completion = [float(r["completion"]) for r in rows]
+    # from row 900 (the ultra crosses lines backwards before that), skipping jumps of half a lap or more
+    return [gv2.line_crossing(completion, line, 900, require_rise=True, max_jump=0.5) for line in LINES]
+
+
+def main():
+    reference = gv2.load_dump(sys.argv[1])
+    reference_path = gv2.path_of_dump(reference)
+    reference_crossings = lap_crossings(reference)
+    for path in sys.argv[1:]:
+        rows = gv2.load_dump(path)
+        laps = " | ".join(f"L{k + 1} line {x:8.2f} ({x - y:+.2f}f)" for k, (x, y) in enumerate(zip(lap_crossings(rows), reference_crossings)))
+        checks = ""
+        for row in CHECK_ROWS:
+            if row < len(rows):
+                x, z = gv2.position_xz(rows[row])
+                ahead, lateral = gv2.progress_on_path(x, z, row, reference_path, look_back=25, look_ahead=24)
+                checks += f" | @{row} ahead {ahead:+.2f} lat {lateral:+.0f} ev {gv2.horizontal_ev(rows[row]):.1f}"
+        print(f"{path}: {laps}{checks} | rows {len(rows)}")
+
+
+if __name__ == "__main__":
+    main()

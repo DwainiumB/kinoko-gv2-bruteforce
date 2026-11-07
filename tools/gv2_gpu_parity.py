@@ -1,33 +1,44 @@
 #!/usr/bin/env python3
-"""GPU vs CPU parity for a ghost: step the GPU engine with the ghost's inputs and compare every row to a CPU replay dump."""
-import csv, os, sys
-import numpy as np
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE); sys.path.insert(0, os.path.join(HERE, "gpu_spike"))
-import cupy as cp
-import brute_force as bf
-from gpu_engine import Engine, make_inputs
-from evolve import COLS, COL
+"""Check that the GPU engine replays a ghost exactly like the CPU build.
 
-rkg, dump = sys.argv[1], sys.argv[2]
-upto = int(sys.argv[3]) if len(sys.argv) > 3 else None
-c, ch, v, fr = bf.decode_rkg(rkg)
-cpu = list(csv.reader(open(dump)))[1:]
-n = min(len(fr), len(cpu), upto or 10**9)
-e = Engine(2, course=c, character=ch, vehicle=v)
-e.clone_template(0, 1)
-names = COLS[1:]
-bad = 0
-for f in range(n):
-    b, t, sx, sy = fr[f]
-    e.step(0, 1, make_inputs(cp.asarray([b], cp.int32), cp.asarray([t], cp.int32), cp.asarray([sx], cp.float32), cp.asarray([sy], cp.float32)))
-    r = cp.asnumpy(e.rows(0, 1, f + 1))[0]
-    row = cpu[f]
-    for nm in ("px", "py", "pz", "qx", "qy", "qz", "qw", "evx", "evy", "evz", "speed", "completion", "flags"):
-        gi = COL[nm]; ci = COLS.index(nm)
-        gv, cv = float(r[gi]), float(row[ci])
-        if gv != cv and not (abs(gv - cv) <= 1e-6 * max(1.0, abs(cv))):
-            if bad < 10:
-                print(f"MISMATCH frame {f} {nm}: gpu {gv!r} cpu {cv!r}")
-            bad += 1
-print(f"course {c} char {ch} veh {v}: compared {n} frames, mismatching values {bad}")
+Steps one GPU race with the ghost's inputs and compares position, rotation, EV, speed, completion and flags on every
+row with a CPU replay dump of the same ghost. Prints the first 10 mismatches and the total; expect 0 before trusting
+a GPU search on a track.
+
+    python tools/gv2_gpu_parity.py ghost.rkg ghost_cpu.csv [rows]
+"""
+import csv
+import sys
+
+import gv2_common as gv2
+import brute_force as bf  # noqa: E402  (gv2_common puts tools/ on sys.path)
+
+cp, Engine, make_inputs, COLUMN = gv2.gpu_modules()
+from gpu_engine import ROW_COLUMN_NAMES  # noqa: E402
+
+COMPARED = ("px", "py", "pz", "qx", "qy", "qz", "qw", "evx", "evy", "evz", "speed", "completion", "flags")
+
+
+def main():
+    ghost, dump = sys.argv[1], sys.argv[2]
+    row_limit = int(sys.argv[3]) if len(sys.argv) > 3 else None
+    course, character, vehicle, frames = bf.decode_rkg(ghost)
+    cpu_rows = list(csv.reader(open(dump)))[1:]
+    rows = min(len(frames), len(cpu_rows), row_limit or 10**9)
+    engine = Engine(2, course=course, character=character, vehicle=vehicle)
+    engine.clone_template(0, 1)
+    mismatches = 0
+    for row in range(rows):
+        gv2.step_single_race(engine, 0, frames[row])
+        gpu = cp.asnumpy(engine.rows(0, 1, row + 1))[0]
+        for name in COMPARED:
+            gpu_value, cpu_value = float(gpu[COLUMN[name]]), float(cpu_rows[row][ROW_COLUMN_NAMES.index(name)])
+            if gpu_value != cpu_value and not (abs(gpu_value - cpu_value) <= 1e-6 * max(1.0, abs(cpu_value))):
+                if mismatches < 10:
+                    print(f"MISMATCH frame {row} {name}: gpu {gpu_value!r} cpu {cpu_value!r}")
+                mismatches += 1
+    print(f"course {course} char {character} veh {vehicle}: compared {rows} frames, mismatching values {mismatches}")
+
+
+if __name__ == "__main__":
+    main()

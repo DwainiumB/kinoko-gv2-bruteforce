@@ -1,125 +1,116 @@
 #!/usr/bin/env python3
-"""Splice sweep: candidate's inputs up to row S-1, then the reference's inputs from row S+d (shifted by d) onward.
+"""Splice sweep: a candidate's inputs before row S, then the reference's inputs taken d rows later (shifted by d).
 
-All (S, d) pairs run in one GPU batch. Each is scored on the L1-line crossing (sub-frame, from completion) and on the state
-vs the reference at --at-rows (ahead in frames, lateral offset, EV, speed).
+Every (S, d) pair in the --s and --d ranges runs in one GPU batch, alongside the reference itself. Each splice is
+scored on its L1-line crossing (sub-frame, from race completion) and on its state at --at-rows: frames ahead of the
+reference path, lateral offset, EV and speed. The best --top are printed (and written with --out).
+
+Use it to find where a new hit's run can hand over to the reference's inputs, e.g. after the superhops.
 
     python tools/gv2_splice.py --cand runs/gv2/gv2_L1hit_E.rkg --s 847 976 --d -3 1 --out runs/gv2/spliceE
 """
 import argparse
-import os
-import sys
 
 import numpy as np
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE)
-sys.path.insert(0, os.path.join(HERE, "gpu_spike"))
-import cupy as cp  # noqa: E402
+import gv2_common as gv2
+import brute_force as bf  # noqa: E402  (gv2_common puts tools/ on sys.path)
 
-import brute_force as bf  # noqa: E402
-from gpu_engine import Engine, make_inputs  # noqa: E402
-from evolve import COL  # noqa: E402
+cp, Engine, make_inputs, COLUMN = gv2.gpu_modules()
 
-G = "samples/tracks/ghost-valley-2/ghosts/"
+L1_LINE = 2.0                 # race completion at the lap 1 line
+CROSSINGS_AFTER_ROW = 900     # ignore completion changes before this row (the ultra crosses lines backwards earlier)
+NOT_CROSSED = 1e9             # sort key of a splice that never reaches the line
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--cand", required=True)
-    ap.add_argument("--ref", default=G + "rGV2_27.818_slimpanda_best.rkg")
-    ap.add_argument("--s", type=int, nargs=2, default=[847, 976])
-    ap.add_argument("--d", type=int, nargs=2, default=[-3, 1])
-    ap.add_argument("--to-row", type=int, default=1060)
-    ap.add_argument("--at-rows", type=int, nargs="+", default=[976, 1000, 1050])
+    ap.add_argument("--cand", required=True, help="run whose inputs are used before row S")
+    ap.add_argument("--ref", default=gv2.REFERENCE_GHOST, help="reference run (default: the 27.818)")
+    ap.add_argument("--ref-dump", default=gv2.REFERENCE_DUMP, help="CPU replay dump of the reference (for the path)")
+    ap.add_argument("--s", type=int, nargs=2, default=[847, 976], help="range of splice rows S (inclusive)")
+    ap.add_argument("--d", type=int, nargs=2, default=[-3, 1], help="range of shifts d (inclusive)")
+    ap.add_argument("--to-row", type=int, default=1060, help="last simulated row")
+    ap.add_argument("--at-rows", type=int, nargs="+", default=[976, 1000, 1050], help="rows where the state is reported")
     ap.add_argument("--max-lat", type=float, default=1e9, help="rank splices off the ref line by more than this at the first --at-rows row last")
     ap.add_argument("--rank-comp", action="store_true", help="rank by race completion at the last --at-rows row (the ultra shortcut), then by the L1 line")
-    ap.add_argument("--top", type=int, default=12)
+    ap.add_argument("--top", type=int, default=12, help="how many splices to print / write")
     ap.add_argument("--out", default=None, help="write the best --top splices as <out>_<k>.rkg")
     a = ap.parse_args()
 
-    c, ch, v, fc = bf.decode_rkg(a.cand)
-    _, _, _, fr = bf.decode_rkg(a.ref)
-    fc, fr = list(fc), list(fr)
+    course, character, vehicle, candidate = bf.decode_rkg(a.cand)
+    reference = list(bf.decode_rkg(a.ref)[3])
+    candidate = list(candidate)
     pairs = [(s, d) for s in range(a.s[0], a.s[1] + 1) for d in range(a.d[0], a.d[1] + 1)]
-    n = len(pairs) + 1                       # slot 1 = the reference itself
-    T = a.to_row
+    races = len(pairs) + 1                       # race 0 = the reference itself
+    last_row = a.to_row
 
-    def seq(s, d):
-        out = list(fc[:s])
-        for f in range(s, T + 1):
-            g = f + d
-            out.append(fr[g] if 0 <= g < len(fr) else (0, 0, 0.0, 0.0))
-        return out
+    def spliced(splice_row, shift):
+        frames = list(candidate[:splice_row])
+        for row in range(splice_row, last_row + 1):
+            source = row + shift
+            frames.append(reference[source] if 0 <= source < len(reference) else gv2.NO_INPUT)
+        return frames
 
-    seqs = [list(fr[:T + 1])] + [seq(s, d) for s, d in pairs]
-    B = np.array([[x[0] for x in sq[:T + 1]] for sq in seqs], np.int32)
-    TR = np.array([[x[1] for x in sq[:T + 1]] for sq in seqs], np.int32)
-    SX = np.array([[x[2] for x in sq[:T + 1]] for sq in seqs], np.float32)
-    SY = np.array([[x[3] for x in sq[:T + 1]] for sq in seqs], np.float32)
+    runs = [list(reference[:last_row + 1])] + [spliced(s, d) for s, d in pairs]
+    buttons, tricks, stick_x, stick_y = (cp.asarray(np.array([[f[field] for f in run[:last_row + 1]] for run in runs], dtype))
+                                         for field, dtype in ((0, np.int32), (1, np.int32), (2, np.float32), (3, np.float32)))
 
-    eng = Engine(n + 1, course=c, character=ch, vehicle=v)
-    eng.clone_template(1, n)
-    Bc, TRc, SXc, SYc = (cp.asarray(x) for x in (B, TR, SX, SY))
-    comp_prev = cp.zeros(n, cp.float32)
-    cross = cp.full(n, cp.nan, cp.float32)
-    snap = {}
-    for f in range(T + 1):
-        eng.step(1, n, make_inputs(Bc[:, f], TRc[:, f], SXc[:, f], SYc[:, f]))
-        rows = eng.rows(1, n, f + 1)
-        comp = rows[:, COL["completion"]].astype(cp.float32)
-        hit = (comp >= 2.0) & (comp_prev < 2.0) & cp.isnan(cross) & (f > 900)
-        cross = cp.where(hit, (f - 1) + (2.0 - comp_prev) / cp.maximum(comp - comp_prev, 1e-6), cross)
-        comp_prev = comp
-        if f in a.at_rows:
-            snap[f] = cp.asnumpy(rows[:, [COL["px"], COL["pz"], COL["evx"], COL["evz"], COL["speed"], COL["completion"]]])
-    cross = cp.asnumpy(cross)
+    engine = Engine(races + 1, course=course, character=character, vehicle=vehicle)
+    engine.clone_template(1, races)
+    previous_completion = cp.zeros(races, cp.float32)
+    crossing = cp.full(races, cp.nan, cp.float32)
+    snapshots = {}                               # row -> numpy (races, 6): x, z, evx, evz, speed, completion
+    for row in range(last_row + 1):
+        engine.step(1, races, make_inputs(buttons[:, row], tricks[:, row], stick_x[:, row], stick_y[:, row]))
+        state = engine.rows(1, races, row + 1)
+        completion = state[:, COLUMN["completion"]].astype(cp.float32)
+        crosses = (completion >= L1_LINE) & (previous_completion < L1_LINE) & cp.isnan(crossing) & (row > CROSSINGS_AFTER_ROW)
+        crossing = cp.where(crosses, (row - 1) + (L1_LINE - previous_completion) / cp.maximum(completion - previous_completion, 1e-6), crossing)
+        previous_completion = completion
+        if row in a.at_rows:
+            snapshots[row] = cp.asnumpy(state[:, [COLUMN["px"], COLUMN["pz"], COLUMN["evx"], COLUMN["evz"], COLUMN["speed"], COLUMN["completion"]]])
+    crossing = cp.asnumpy(crossing)
 
-    # reference path from slot 0 (the reference run) is needed for ahead/lat: rebuild it cheaply on the CPU dump instead
-    import csv
-    R = list(csv.DictReader(open(os.path.join(os.path.dirname(HERE), "runs/gv2/gv2_27818.csv"))))
-    P = np.array([[float(r["px"]), float(r["pz"])] for r in R[:T + 60]])
+    reference_path = gv2.path_of_dump(gv2.load_dump(a.ref_dump), last_row + 60)
+    results = []
+    for i in range(races):
+        result = {"cross": crossing[i]}
+        for row in a.at_rows:
+            x, z, evx, evz, speed, _ = snapshots[row][i]
+            ahead, lateral = gv2.progress_on_path(x, z, row, reference_path, look_back=40, look_ahead=40)
+            result[row] = (ahead, lateral, float(np.hypot(evx, evz)), float(speed))
+        results.append(result)
+    reference_crossing = results[0]["cross"]
 
-    def ahead(x, z, r):
-        lo, hi = max(0, r - 40), min(len(P) - 2, r + 40)
-        seg = P[lo:hi + 1]
-        k = int(np.argmin((seg[:, 0] - x) ** 2 + (seg[:, 1] - z) ** 2)) + lo
-        k = min(k, len(P) - 2)
-        dx, dz = P[k + 1] - P[k]
-        s2 = max(dx * dx + dz * dz, 1e-6)
-        t = ((x - P[k, 0]) * dx + (z - P[k, 1]) * dz) / s2
-        lat = ((x - P[k, 0]) * dz - (z - P[k, 1]) * dx) / s2 ** 0.5
-        return k + t - r, lat
+    def describe(result):
+        text = f"L1 line {result['cross']:.2f} ({result['cross'] - reference_crossing:+.2f}f)"
+        for row in a.at_rows:
+            ahead, lateral, ev, speed = result[row]
+            text += f" | @{row} ahead {ahead:+.2f}f lat {lateral:+6.1f} ev {ev:4.1f} sp {speed:5.1f}"
+        return text
 
-    res = []
-    for i in range(n):
-        m = {"cross": cross[i]}
-        for r in a.at_rows:
-            x, z, evx, evz, sp, cm = snap[r][i]
-            m[r] = ahead(x, z, r) + (float(np.hypot(evx, evz)), float(sp))
-        res.append(m)
-    ref_cross = res[0]["cross"]
+    def crossing_key(i):
+        return results[i]["cross"] if not np.isnan(results[i]["cross"]) else NOT_CROSSED
 
-    def line(m):
-        s = f"L1 line {m['cross']:.2f} ({m['cross'] - ref_cross:+.2f}f)"
-        for r in a.at_rows:
-            ah, lat, ev, sp = m[r]
-            s += f" | @{r} ahead {ah:+.2f}f lat {lat:+6.1f} ev {ev:4.1f} sp {sp:5.1f}"
-        return s
-
-    print(f"reference: {line(res[0])}")
-    last = a.at_rows[-1]
-    key = lambda i: (res[i]["cross"] if not np.isnan(res[i]["cross"]) else 1e9) + (0.0 if abs(res[i][a.at_rows[0]][1]) < a.max_lat else 1000.0)
+    last_at_row = a.at_rows[-1]
     if a.rank_comp:
-        key = lambda i: (-round(float(snap[last][i][5]), 3), res[i]["cross"] if not np.isnan(res[i]["cross"]) else 1e9)
-    order = sorted(range(1, n), key=key)
-    for rank, i in enumerate(order[:a.top]):
+        def rank_key(i):
+            return (-round(float(snapshots[last_at_row][i][5]), 3), crossing_key(i))
+    else:
+        def rank_key(i):
+            off_line = abs(results[i][a.at_rows[0]][1]) >= a.max_lat
+            return crossing_key(i) + (1000.0 if off_line else 0.0)
+
+    print(f"reference: {describe(results[0])}")
+    ranked = sorted(range(1, races), key=rank_key)
+    for rank, i in enumerate(ranked[:a.top]):
         s, d = pairs[i - 1]
-        print(f"S={s} d={d:+d}: {line(res[i])} | comp@{last} {snap[last][i][5]:.4f} (ref {snap[last][0][5]:.4f})")
+        print(f"S={s} d={d:+d}: {describe(results[i])} | comp@{last_at_row} {snapshots[last_at_row][i][5]:.4f} "
+              f"(ref {snapshots[last_at_row][0][5]:.4f})")
         if a.out:
-            path = f"{a.out}_{rank}.rkg"
-            open(path, "wb").write(bf.encode_rkg(c, ch, v, seqs[i], 0))
-    print("best L1 line among all:", min((res[i]["cross"], pairs[i - 1]) for i in range(1, n) if not np.isnan(res[i]["cross"])))
+            open(f"{a.out}_{rank}.rkg", "wb").write(bf.encode_rkg(course, character, vehicle, runs[i], 0))
+    print("best L1 line among all:", min((results[i]["cross"], pairs[i - 1]) for i in range(1, races) if not np.isnan(results[i]["cross"])))
 
 
 if __name__ == "__main__":

@@ -23,6 +23,13 @@ import cupy as cp  # noqa: E402
 
 import run_gpu  # noqa: E402
 
+# Names of the GPU row values, in the same order as the CPU replay dump's CSV columns (FrameState.cc).
+# ROW_COLUMN[name] is the index into a GPU row; index 0 of a GPU row is a count, hence the + 1.
+ROW_COLUMN_NAMES = ("frame,stage,timerMs,raceFrame,px,py,pz,qx,qy,qz,qw,mqx,mqy,mqz,mqw,evx,evy,evz,ivx,ivy,ivz,"
+                    "speed,speedRatio,driftState,mtCharge,hopStickX,kclSpeedFactor,flags,stickX,stickY,buttons,trick,"
+                    "completion,checkpoint,lap,wrongWay,mushrooms").split(",")
+ROW_COLUMN = {name: 1 + i for i, name in enumerate(ROW_COLUMN_NAMES)}
+
 ROW_DOUBLES = 128      # KINOKO_CAPTURE_DOUBLES: [0] count, [1..109] FrameState row, [120] stage, [121] race timer ms
 STAGE, TIMER = 120, 121
 INPUT_DTYPE = np.dtype([("b", "<i4"), ("sx", "<f4"), ("sy", "<f4"), ("t", "<i4")])  # runtime.cu StepInput

@@ -73,3 +73,6 @@ tools/gpu_spike/xsrc/
 tools/gpu_spike/*.bak*
 tools/*.bak*
 tools/surrogate*.npz
+
+# local search outputs
+runs/

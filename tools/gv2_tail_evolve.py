@@ -1,53 +1,61 @@
 #!/usr/bin/env python3
-"""GV2 L1: fit the superhops after the fast block hit (rows --from-row .. --to-row), on the GPU.
+"""Search the inputs after the fast block hit on GV2: the superhops to the L1 line, or the lap 2 entry (GPU).
 
-Genome per row: stick X, stick Y (-7..7), face buttons, trick. Rows before --from-row = the base run (the hit, e.g.
-gv2_L1hit_E). Rows after --to-row = the reference's inputs at row + --tail-shift (the 27.818's L2 approach).
-Mutations: stick point edits, hop-timing shifts (a button run boundary moves one frame), single-frame button toggles
-(11 <-> 1), trick copies from the reference (+-1 frame), and block copies from another good genome.
+What is searched: stick X, stick Y (-7..+7), face buttons and trick for every row from --from-row to --to-row.
+Rows before --from-row are the base run (usually a run with the hit already found, e.g. gv2_L1hit_E). Rows after
+--to-row are the reference's inputs taken --tail-shift rows later (tail shift 1 = play the reference's inputs one
+frame early, i.e. try to stay one frame ahead of it). Simulation runs to --sim-to.
 
-Cost (lower = better):
-    w_cross * (sub-frame L1-line crossing - reference crossing)           (frames; not crossed by --to-row + 10: 1000)
-  + w_lat   * mean over --lat-rows of max(lateral offset from the ref path - lat_tol, 0)   (the lap-2 line)
-  - w_ev    * min(EV at --ev-row, ev_cap)
-  + w_sp    * |speed - ref speed| at --ev-row
-  + w_each  * changed values vs the base
+Mutations: stick edits, moving a hop-timing boundary by one frame (the start or end of a run of equal buttons),
+single-frame button toggles (11 <-> 1, i.e. drift held or not), trick copies from the reference (+-1 row), and block
+copies from another good genome (crossover).
+
+How a candidate is scored (lower cost = better):
+      w_cross * (sub-frame row where it crosses the --line-comp line - the reference's crossing)   (frames; not
+                crossed by --sim-to: 1000 + 1000 * completion still missing)
+    + w_lat   * mean over --lat-rows of max(lateral offset from the reference path - lat_tol, 0)
+    - w_ev    * min(horizontal EV at --ev-row, ev_cap)
+    + w_sp    * |speed - reference speed| at --ev-row
+    + w_each  * changed values vs the base
+    - w_ev2   * mean over --ev2-rows of min(EV, ev2_cap)                      (the 2nd block bounce)
+    - w_ahead * frames ahead on the reference path at --ahead-row (clipped to -60..+5; -60 if > 300 off the path)
+    + w_sync  * mean over --sync-rows of the distance to the reference at row + tail_shift (capped at sync_cap;
+                includes height from --sync-y-from on)
+    + w_comp  * race completion short of the reference's at --comp-row      (did the ultra shortcut happen)
+
+Writes the 6 best distinct candidates as <out>_0.rkg .. <out>_5.rkg; after --sim-to each carries the reference's
+remaining inputs (shifted), so the files hold a full race.
 
     python tools/gv2_tail_evolve.py --base runs/gv2/gv2_L1hit_E.rkg --seed runs/gv2/spliceE_0.rkg --out runs/gv2/tailA
 """
 import argparse
-import csv
 import os
-import sys
 import time
 
 import numpy as np
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE)
-sys.path.insert(0, os.path.join(HERE, "gpu_spike"))
-import cupy as cp  # noqa: E402
+import gv2_common as gv2
+import brute_force as bf  # noqa: E402  (gv2_common puts tools/ on sys.path)
 
-import brute_force as bf  # noqa: E402
-from gpu_engine import Engine, make_inputs  # noqa: E402
-from evolve import COL  # noqa: E402
+cp, Engine, make_inputs, COLUMN = gv2.gpu_modules()
 
-ROOT = os.path.dirname(HERE)
-G = os.path.join(ROOT, "samples/tracks/ghost-valley-2/ghosts/")
+# genome columns
+STICK_X, STICK_Y, BUTTONS, TRICK = 0, 1, 2, 3
+DRIFT_HELD, DRIFT_RELEASED = 11, 1        # button values toggled by the single-frame button mutation
 
 
-def main():
+def parse_args():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--base", default=os.path.join(ROOT, "runs/gv2/gv2_L1hit_E.rkg"))
-    ap.add_argument("--ref", default=G + "rGV2_27.818_slimpanda_best.rkg")
-    ap.add_argument("--ref-dump", default=os.path.join(ROOT, "runs/gv2/gv2_27818.csv"))
-    ap.add_argument("--seed", action="append", default=[])
-    ap.add_argument("--from-row", type=int, default=849)
-    ap.add_argument("--to-row", type=int, default=990)
-    ap.add_argument("--tail-shift", type=int, default=0)
-    ap.add_argument("--sim-to", type=int, default=1000)
-    ap.add_argument("--lat-rows", type=int, nargs="+", default=[976, 990])
-    ap.add_argument("--ev-row", type=int, default=976)
+    ap.add_argument("--base", default=os.path.join(gv2.REPO_ROOT, "runs/gv2/gv2_L1hit_E.rkg"), help="run whose inputs are used before --from-row")
+    ap.add_argument("--ref", default=gv2.REFERENCE_GHOST, help="reference run (default: the 27.818)")
+    ap.add_argument("--ref-dump", default=gv2.REFERENCE_DUMP, help="CPU replay dump of the reference")
+    ap.add_argument("--seed", action="append", default=[], help="extra runs whose rows seed part of the population")
+    ap.add_argument("--from-row", type=int, default=849, help="first searched row")
+    ap.add_argument("--to-row", type=int, default=990, help="last searched row")
+    ap.add_argument("--tail-shift", type=int, default=0, help="after --to-row, play the reference's inputs from this many rows later")
+    ap.add_argument("--sim-to", type=int, default=1000, help="last simulated row")
+    ap.add_argument("--lat-rows", type=int, nargs="+", default=[976, 990], help="rows where distance from the reference path is scored")
+    ap.add_argument("--ev-row", type=int, default=976, help="row where EV and speed are scored")
     ap.add_argument("--ev2-rows", type=int, nargs="*", default=[], help="rows where EV is rewarded too (the 2nd block bounce, ~1032/1044)")
     ap.add_argument("--w-ev2", type=float, default=2.0)
     ap.add_argument("--ev2-cap", type=float, default=50.0)
@@ -59,10 +67,10 @@ def main():
     ap.add_argument("--sync-y-from", type=int, default=None, help="from this row on, the sync distance includes height (py): did the kart take the same jump")
     ap.add_argument("--comp-row", type=int, default=None, help="cost w-comp per unit of race completion short of the reference's (at row + tail_shift) at this row: did the ultra shortcut happen")
     ap.add_argument("--w-comp", type=float, default=2000.0)
-    ap.add_argument("--pop", type=int, default=2048)
+    ap.add_argument("--pop", type=int, default=2048, help="population size (races simulated per generation)")
     ap.add_argument("--gens", type=int, default=300)
-    ap.add_argument("--elite", type=float, default=0.08)
-    ap.add_argument("--w-cross", type=float, default=100.0)
+    ap.add_argument("--elite", type=float, default=0.08, help="share of the best kept unchanged each generation")
+    ap.add_argument("--w-cross", type=float, default=100.0, help="weight of the line crossing (per frame)")
     ap.add_argument("--line-comp", type=float, default=2.0, help="completion value of the line scored by w-cross (2.0 = L1 line, 4.0 = finish)")
     ap.add_argument("--cross-after", type=int, default=900, help="only count line crossings after this row")
     ap.add_argument("--w-lat", type=float, default=0.5)
@@ -70,212 +78,209 @@ def main():
     ap.add_argument("--w-ev", type=float, default=2.0)
     ap.add_argument("--ev-cap", type=float, default=45.0)
     ap.add_argument("--w-sp", type=float, default=1.0)
-    ap.add_argument("--w-each", type=float, default=0.3)
+    ap.add_argument("--w-each", type=float, default=0.3, help="cost per changed value (tie-break toward fewer edits)")
     ap.add_argument("--p-btn", type=float, default=0.35, help="share of mutations that move hop timing / toggle a button")
-    ap.add_argument("--p-trick", type=float, default=0.05)
-    ap.add_argument("--seed-rng", type=int, default=1)
-    ap.add_argument("--time-limit", type=float, default=1500.0)
-    ap.add_argument("--out", required=True)
-    a = ap.parse_args()
-    rng = np.random.default_rng(a.seed_rng)
+    ap.add_argument("--p-trick", type=float, default=0.05, help="share of mutations that copy a trick from the reference")
+    ap.add_argument("--seed-rng", type=int, default=1, help="random seed (same seed + same inputs = same result)")
+    ap.add_argument("--time-limit", type=float, default=1500.0, help="stop after this many seconds and write the candidates")
+    ap.add_argument("--out", required=True, help="output prefix for the candidate .rkg files")
+    return ap.parse_args()
 
-    c, ch, v, fb = bf.decode_rkg(a.base)
-    fr = list(bf.decode_rkg(a.ref)[3])
-    fb = list(fb)
-    R0, R1, T = a.from_row, a.to_row, a.sim_to
-    W = R1 - R0 + 1
-    n = a.pop
 
-    def full(frames):
-        """frames up to R1 from `frames`, then the reference (shifted) up to T."""
-        out = list(frames[:R1 + 1]) + [fr[f + a.tail_shift] for f in range(R1 + 1, T + 1)]
-        while len(out) < T + 1:
-            out.append((0, 0, 0.0, 0.0))
+class TailSearch:
+    """The base run, the searched rows and the scoring. A genome is an int8 array (rows, 4): stick X, stick Y,
+    buttons, trick."""
+
+    def __init__(self, args, rng):
+        self.args, self.rng = args, rng
+        self.course, self.character, self.vehicle, base_frames = bf.decode_rkg(args.base)
+        self.reference_frames = list(bf.decode_rkg(args.ref)[3])
+        self.first_row, self.last_searched_row, self.last_row = args.from_row, args.to_row, args.sim_to
+        self.searched_rows = self.last_searched_row - self.first_row + 1
+        self.size = args.pop
+
+        base_frames = list(base_frames)
+        base_frames += [gv2.NO_INPUT] * max(0, self.last_searched_row + 1 - len(base_frames))
+        self.frames = self.with_reference_tail(base_frames)
+        self.base_genome = self.genome_of(self.frames)
+        self.reference_genome = self.genome_of(self.reference_frames)
+        self.seeds = [self.base_genome] + [self.genome_of(list(bf.decode_rkg(p)[3])) for p in args.seed]
+
+        # the reference from its CPU dump: path, height, completion, line crossing, speed at --ev-row
+        dump = gv2.load_dump(args.ref_dump)
+        self.reference_xz = cp.asarray(np.array([[float(r["px"]), float(r["pz"])] for r in dump[:self.last_row + 60]], np.float32))
+        self.reference_height = cp.asarray(np.array([float(r["py"]) for r in dump[:self.last_row + 60]], np.float32))
+        self.reference_path = gv2.GpuReferencePath(self.reference_xz)
+        self.reference_completion = [float(r["completion"]) for r in dump]
+        self.reference_crossing = gv2.line_crossing(self.reference_completion, args.line_comp, args.cross_after)
+        self.reference_speed = float(dump[args.ev_row]["speed"])
+
+        # slot 0 holds the race just before the searched rows; slots 1..size are the population
+        self.engine = Engine(self.size + 2, course=self.course, character=self.character, vehicle=self.vehicle)
+        self.engine.clone_template(0, 1)
+        for row in range(self.first_row):
+            gv2.step_single_race(self.engine, 0, self.frames[row])
+        self.fixed_tail = self.frames[self.last_searched_row + 1:self.last_row + 1]
+
+    def with_reference_tail(self, frames):
+        """frames up to the last searched row, then the reference's (shifted) inputs up to the last simulated row."""
+        shift = self.args.tail_shift
+        out = list(frames[:self.last_searched_row + 1])
+        out += [self.reference_frames[r + shift] for r in range(self.last_searched_row + 1, self.last_row + 1)]
+        while len(out) < self.last_row + 1:
+            out.append(gv2.NO_INPUT)
         return out
 
-    fb = full(fb + [(0, 0, 0.0, 0.0)] * max(0, R1 + 1 - len(fb)))
+    def genome_of(self, frames):
+        return np.array([[round(frames[r][2] * 7), round(frames[r][3] * 7), frames[r][0], frames[r][1]]
+                         for r in range(self.first_row, self.last_searched_row + 1)], np.int8)
 
-    def genome(frames):
-        return np.array([[round(frames[f][2] * 7), round(frames[f][3] * 7), frames[f][0], frames[f][1]] for f in range(R0, R1 + 1)], np.int8)
+    def frames_of(self, genome):
+        """A full race: base inputs, the genome's rows, the reference tail, then the rest of the reference (shifted)."""
+        frames = list(self.frames)
+        for k in range(self.searched_rows):
+            stick_x, stick_y, buttons, trick = (int(x) for x in genome[k])
+            frames[self.first_row + k] = (buttons, trick, stick_x / 7.0, stick_y / 7.0)
+        shift = self.args.tail_shift
+        frames += [self.reference_frames[r + shift] for r in range(self.last_row + 1, len(self.reference_frames) - max(shift, 0))]
+        return frames
 
-    base_g = genome(fb)
-    ref_g = genome(fr)
-    seeds = [base_g] + [genome(list(bf.decode_rkg(p)[3])) for p in a.seed]
-
-    # reference: path, crossing, speed
-    R = list(csv.DictReader(open(a.ref_dump)))
-    P = cp.asarray(np.array([[float(r["px"]), float(r["pz"])] for r in R[:T + 60]], np.float32))
-    PY = cp.asarray(np.array([float(r["py"]) for r in R[:T + 60]], np.float32))
-    comp = [float(r["completion"]) for r in R]
-    i = next(k for k in range(a.cross_after, len(comp)) if comp[k] >= a.line_comp)
-    ref_cross = (i - 1) + (a.line_comp - comp[i - 1]) / (comp[i] - comp[i - 1])
-    ref_sp = float(R[a.ev_row]["speed"])
-
-    def ahead_lat(rows, f):
-        lo, hi = max(0, f - 25), f + 25
-        px, pz = rows[:, COL["px"]], rows[:, COL["pz"]]
-        seg = P[lo:hi]
-        k = cp.minimum((((px[:, None] - seg[None, :, 0]) ** 2 + (pz[:, None] - seg[None, :, 1]) ** 2)).argmin(axis=1), hi - lo - 2)
-        x0, z0, x1, z1 = seg[k, 0], seg[k, 1], P[lo + k + 1, 0], P[lo + k + 1, 1]
-        dx, dz = x1 - x0, z1 - z0
-        s2 = cp.maximum(dx * dx + dz * dz, 1e-6)
-        return (lo + k).astype(cp.float32) + ((px - x0) * dx + (pz - z0) * dz) / s2 - f
-
-    def lat_of(rows, f):
-        lo, hi = max(0, f - 25), f + 25
-        px, pz = rows[:, COL["px"]], rows[:, COL["pz"]]
-        seg = P[lo:hi]
-        k = cp.minimum((((px[:, None] - seg[None, :, 0]) ** 2 + (pz[:, None] - seg[None, :, 1]) ** 2)).argmin(axis=1), hi - lo - 2)
-        x0, z0, x1, z1 = seg[k, 0], seg[k, 1], P[lo + k + 1, 0], P[lo + k + 1, 1]
-        dx, dz = x1 - x0, z1 - z0
-        return cp.abs((px - x0) * dz - (pz - z0) * dx) / cp.sqrt(cp.maximum(dx * dx + dz * dz, 1e-6))
-
-    eng = Engine(n + 2, course=c, character=ch, vehicle=v)
-    eng.clone_template(0, 1)
-    for f in range(R0):
-        b, t, sx, sy = fb[f]
-        eng.step(0, 1, make_inputs(cp.asarray([b], cp.int32), cp.asarray([t], cp.int32), cp.asarray([sx], cp.float32), cp.asarray([sy], cp.float32)))
-    tail = fb[R1 + 1:T + 1]
-
-    def mutate(g):
+    def mutate(self, genome):
+        """1-3 random changes (see the module docstring for the kinds)."""
+        a, rng = self.args, self.rng
         for _ in range(int(rng.integers(1, 4))):
-            k = int(rng.integers(0, W))
-            r_ = rng.random()
-            if r_ < a.p_btn:
+            row = int(rng.integers(0, self.searched_rows))
+            kind = rng.random()
+            if kind < a.p_btn:
                 if rng.random() < 0.6:          # move a hop-timing boundary by one frame
-                    edges = np.nonzero(g[1:, 2] != g[:-1, 2])[0] + 1
-                    if len(edges):
-                        e = int(rng.choice(edges))
+                    boundaries = np.nonzero(genome[1:, BUTTONS] != genome[:-1, BUTTONS])[0] + 1
+                    if len(boundaries):
+                        edge = int(rng.choice(boundaries))
                         if rng.random() < 0.5:
-                            g[e, 2] = g[e - 1, 2]
+                            genome[edge, BUTTONS] = genome[edge - 1, BUTTONS]
                         else:
-                            g[e - 1, 2] = g[e, 2]
-                else:                           # toggle a single frame between 11 and 1
-                    g[k, 2] = 1 if g[k, 2] == 11 else 11
-            elif r_ < a.p_btn + a.p_trick:
-                kk = int(np.clip(k + rng.integers(-1, 2), 0, W - 1))
-                g[k, 3] = ref_g[kk, 3] if rng.random() < 0.7 else 0
-            else:
-                ax = int(rng.integers(0, 2))
-                q = rng.random()
-                if q < 0.5:
-                    g[k, ax] = np.clip(g[k, ax] + rng.choice([-2, -1, 1, 2]), -7, 7)
-                elif q < 0.8:
-                    g[k, ax] = rng.choice([-7, 0, 7]) if rng.random() < 0.6 else rng.integers(-7, 8)
+                            genome[edge - 1, BUTTONS] = genome[edge, BUTTONS]
+                else:                           # toggle a single frame between drift held and released
+                    genome[row, BUTTONS] = DRIFT_RELEASED if genome[row, BUTTONS] == DRIFT_HELD else DRIFT_HELD
+            elif kind < a.p_btn + a.p_trick:    # copy the reference's trick from this row or a neighbour
+                source = int(np.clip(row + rng.integers(-1, 2), 0, self.searched_rows - 1))
+                genome[row, TRICK] = self.reference_genome[source, TRICK] if rng.random() < 0.7 else 0
+            else:                               # stick edit
+                axis = int(rng.integers(0, 2))
+                how = rng.random()
+                if how < 0.5:
+                    genome[row, axis] = np.clip(genome[row, axis] + rng.choice([-2, -1, 1, 2]), -7, 7)
+                elif how < 0.8:
+                    genome[row, axis] = rng.choice([-7, 0, 7]) if rng.random() < 0.6 else rng.integers(-7, 8)
                 else:
-                    g[k, ax] = base_g[k, ax]
-        return g
+                    genome[row, axis] = self.base_genome[row, axis]
+        return genome
 
-    pop = np.zeros((n, W, 4), np.int8)
-    for i in range(n):
-        s = seeds[i % len(seeds)].copy()
-        if i >= len(seeds):
-            s = mutate(s)
-        pop[i] = s
-
-    def evaluate(pop):
-        eng.copy([0] * n, list(range(1, n + 1)))
-        G_ = cp.asarray(pop.astype(np.float32))
-        cprev = cp.zeros(n, cp.float32)
-        cross = cp.full(n, cp.nan, cp.float32)
-        lat = cp.zeros(n, cp.float32)
+    def evaluate(self, population):
+        """Simulate every genome from --from-row to --sim-to and score it (see the module docstring)."""
+        a, n = self.args, self.size
+        self.engine.copy([0] * n, list(range(1, n + 1)))
+        genomes = cp.asarray(population.astype(np.float32))
+        previous_completion = cp.zeros(n, cp.float32)
+        crossing = cp.full(n, cp.nan, cp.float32)      # sub-frame row of the line crossing
+        lateral_excess = cp.zeros(n, cp.float32)
         ev = cp.zeros(n, cp.float32)
-        sp = cp.zeros(n, cp.float32)
-        clast = cp.zeros(n, cp.float32)
-        ev2 = cp.zeros(n, cp.float32)
-        ahd = cp.zeros(n, cp.float32)
-        sync = cp.zeros(n, cp.float32)
-        cshort = cp.zeros(n, cp.float32)
-        for f in range(R0, T + 1):
-            if f <= R1:
-                k = f - R0
-                inp = make_inputs(G_[:, k, 2].astype(cp.int32), G_[:, k, 3].astype(cp.int32), G_[:, k, 0] / 7.0, G_[:, k, 1] / 7.0)
+        speed = cp.zeros(n, cp.float32)
+        last_completion = cp.zeros(n, cp.float32)
+        ev_second_bounce = cp.zeros(n, cp.float32)
+        ahead = cp.zeros(n, cp.float32)
+        sync_distance = cp.zeros(n, cp.float32)
+        completion_short = cp.zeros(n, cp.float32)
+
+        for row in range(self.first_row, self.last_row + 1):
+            if row <= self.last_searched_row:
+                k = row - self.first_row
+                inputs = make_inputs(genomes[:, k, BUTTONS].astype(cp.int32), genomes[:, k, TRICK].astype(cp.int32),
+                                     genomes[:, k, STICK_X] / 7.0, genomes[:, k, STICK_Y] / 7.0)
             else:
-                b, t, sx, sy = tail[f - R1 - 1]
-                inp = make_inputs(cp.full(n, b, cp.int32), cp.full(n, t, cp.int32), cp.full(n, sx, cp.float32), cp.full(n, sy, cp.float32))
-            eng.step(1, n, inp)
-            rows = eng.rows(1, n, f + 1)
-            cm = rows[:, COL["completion"]].astype(cp.float32)
-            hit = (cm >= a.line_comp) & (cprev < a.line_comp) & cp.isnan(cross) & (f > a.cross_after)
-            cross = cp.where(hit, (f - 1) + (a.line_comp - cprev) / cp.maximum(cm - cprev, 1e-6), cross)
-            cprev = cm
-            clast = cm
-            if f in a.lat_rows:
-                lat += cp.maximum(lat_of(rows, f) - a.lat_tol, 0.0) / len(a.lat_rows)
-            if a.comp_row is not None and f == a.comp_row:
-                cshort = cp.maximum(comp[f + a.tail_shift] - cm, 0.0).astype(cp.float32)
-            if f in a.sync_rows:
-                g_ = f + a.tail_shift
-                d2_ = (rows[:, COL["px"]] - P[g_, 0]) ** 2 + (rows[:, COL["pz"]] - P[g_, 1]) ** 2
-                if a.sync_y_from is not None and f >= a.sync_y_from:
-                    d2_ = d2_ + (rows[:, COL["py"]] - PY[g_]) ** 2
-                d_ = cp.sqrt(d2_)
-                sync += cp.minimum(d_, a.sync_cap).astype(cp.float32) / len(a.sync_rows)
-            if f in a.ev2_rows:
-                ev2 += cp.minimum(cp.hypot(rows[:, COL["evx"]], rows[:, COL["evz"]]), a.ev2_cap).astype(cp.float32) / len(a.ev2_rows)
-            if a.ahead_row is not None and f == a.ahead_row:
-                ahd = cp.clip(ahead_lat(rows, f), -60.0, 5.0).astype(cp.float32)
-                ahd = cp.where(lat_of(rows, f) > 300.0, -60.0, ahd).astype(cp.float32)
-            if f == a.ev_row:
-                ev = cp.hypot(rows[:, COL["evx"]], rows[:, COL["evz"]]).astype(cp.float32)
-                sp = rows[:, COL["speed"]].astype(cp.float32)
-        dcross = cp.where(cp.isnan(cross), 1000.0 + 1000.0 * cp.maximum(a.line_comp - clast, 0), cross - ref_cross)
-        edits = cp.asarray((pop != base_g[None]).sum(axis=(1, 2)).astype(np.float32))
-        cost = (a.w_cross * dcross + a.w_lat * lat - a.w_ev * cp.minimum(ev, a.ev_cap) + a.w_sp * cp.abs(sp - ref_sp) + a.w_each * edits
-                - a.w_ev2 * ev2 - a.w_ahead * ahd + a.w_sync * sync + a.w_comp * cshort)
-        return {k: cp.asnumpy(x) for k, x in dict(cost=cost, dcross=dcross, lat=lat, ev=ev, sp=sp, edits=edits, ev2=ev2, ahd=ahd, sync=sync, cshort=cshort).items()}
+                inputs = gv2.same_inputs_for_all(n, self.fixed_tail[row - self.last_searched_row - 1])
+            self.engine.step(1, n, inputs)
+            state = self.engine.rows(1, n, row + 1)
 
-    def line(m, i):
+            completion = state[:, COLUMN["completion"]].astype(cp.float32)
+            crosses = ((completion >= a.line_comp) & (previous_completion < a.line_comp) & cp.isnan(crossing)
+                       & (row > a.cross_after))
+            crossing = cp.where(crosses, (row - 1) + (a.line_comp - previous_completion)
+                                / cp.maximum(completion - previous_completion, 1e-6), crossing)
+            previous_completion = completion
+            last_completion = completion
+
+            if row in a.lat_rows:
+                lateral = self.reference_path.progress(state, row)[1]
+                lateral_excess += cp.maximum(lateral - a.lat_tol, 0.0) / len(a.lat_rows)
+            if a.comp_row is not None and row == a.comp_row:
+                completion_short = cp.maximum(self.reference_completion[row + a.tail_shift] - completion, 0.0).astype(cp.float32)
+            if row in a.sync_rows:
+                target = row + a.tail_shift
+                dist_sq = ((state[:, COLUMN["px"]] - self.reference_xz[target, 0]) ** 2
+                           + (state[:, COLUMN["pz"]] - self.reference_xz[target, 1]) ** 2)
+                if a.sync_y_from is not None and row >= a.sync_y_from:
+                    dist_sq = dist_sq + (state[:, COLUMN["py"]] - self.reference_height[target]) ** 2
+                sync_distance += cp.minimum(cp.sqrt(dist_sq), a.sync_cap).astype(cp.float32) / len(a.sync_rows)
+            if row in a.ev2_rows:
+                ev_second_bounce += cp.minimum(gv2.gpu_horizontal_ev(state), a.ev2_cap).astype(cp.float32) / len(a.ev2_rows)
+            if a.ahead_row is not None and row == a.ahead_row:
+                frames_ahead, lateral = self.reference_path.progress(state, row)
+                ahead = cp.clip(frames_ahead, -60.0, 5.0).astype(cp.float32)
+                ahead = cp.where(lateral > 300.0, -60.0, ahead).astype(cp.float32)
+            if row == a.ev_row:
+                ev = gv2.gpu_horizontal_ev(state).astype(cp.float32)
+                speed = state[:, COLUMN["speed"]].astype(cp.float32)
+
+        crossing_vs_reference = cp.where(cp.isnan(crossing), 1000.0 + 1000.0 * cp.maximum(a.line_comp - last_completion, 0),
+                                         crossing - self.reference_crossing)
+        edits = cp.asarray((population != self.base_genome[None]).sum(axis=(1, 2)).astype(np.float32))
+        # the order of the terms is kept as it was when the published results were found (float sums depend on it)
+        cost = (a.w_cross * crossing_vs_reference
+                + a.w_lat * lateral_excess
+                - a.w_ev * cp.minimum(ev, a.ev_cap)
+                + a.w_sp * cp.abs(speed - self.reference_speed)
+                + a.w_each * edits
+                - a.w_ev2 * ev_second_bounce
+                - a.w_ahead * ahead
+                + a.w_sync * sync_distance
+                + a.w_comp * completion_short)
+        metrics = dict(cost=cost, dcross=crossing_vs_reference, lat=lateral_excess, ev=ev, sp=speed, edits=edits,
+                       ev2=ev_second_bounce, ahd=ahead, sync=sync_distance, cshort=completion_short)
+        return {name: cp.asnumpy(values) for name, values in metrics.items()}
+
+    def describe(self, metrics, i):
+        a, m = self.args, metrics
         return (f"cost {m['cost'][i]:8.1f} | L1 line {m['dcross'][i]:+.3f}f vs 27.818 | off-line excess {m['lat'][i]:6.1f} | "
-                f"sync {m['sync'][i]:6.1f} | comp short {m['cshort'][i]:.3f} | EV2 {m['ev2'][i]:4.1f} | ahead@{a.ahead_row} {m['ahd'][i]:+.2f}f | EV@{a.ev_row} {m['ev'][i]:4.1f} sp {m['sp'][i]:5.1f} (ref {ref_sp:.1f}) | edits {int(m['edits'][i])}")
+                f"sync {m['sync'][i]:6.1f} | comp short {m['cshort'][i]:.3f} | EV2 {m['ev2'][i]:4.1f} | ahead@{a.ahead_row} {m['ahd'][i]:+.2f}f | "
+                f"EV@{a.ev_row} {m['ev'][i]:4.1f} sp {m['sp'][i]:5.1f} (ref {self.reference_speed:.1f}) | edits {int(m['edits'][i])}")
 
-    t0 = time.time()
-    m = evaluate(pop)
-    print(f"reference L1 crossing {ref_cross:.3f}", flush=True)
-    print(f"base : {line(m, 0)}", flush=True)
-    for j in range(1, len(seeds)):
-        print(f"seed{j}: {line(m, j)}", flush=True)
-    for g in range(1, a.gens + 1):
-        order = np.argsort(m["cost"])
-        ne = max(2, int(a.elite * n))
-        new = np.empty_like(pop)
-        new[:ne] = pop[order[:ne]]
-        third = max(ne + 1, n // 3)
-        for i in range(ne, n):
-            ch_ = pop[order[rng.integers(0, third, 2)].min()].copy()
-            if rng.random() < 0.3:
-                p2 = pop[order[rng.integers(0, third, 2)].min()]
-                c1, c2 = sorted(rng.integers(0, W, 2))
-                ch_[c1:c2 + 1] = p2[c1:c2 + 1]
-            new[i] = mutate(ch_)
-        pop = new
-        m = evaluate(pop)
-        if g % 5 == 0 or g == a.gens:
-            i = int(np.argmin(m["cost"]))
-            print(f"gen {g:3d}: {line(m, i)} [{time.time() - t0:.0f}s]", flush=True)
-        if time.time() - t0 > a.time_limit:
-            print(f"time limit reached at gen {g}", flush=True)
+
+def main():
+    args = parse_args()
+    rng = np.random.default_rng(args.seed_rng)
+    search = TailSearch(args, rng)
+    population = gv2.initial_population(search.seeds, search.size, search.mutate)
+
+    start = time.time()
+    metrics = search.evaluate(population)
+    print(f"reference L1 crossing {search.reference_crossing:.3f}", flush=True)
+    print(f"base : {search.describe(metrics, 0)}", flush=True)
+    for j in range(1, len(search.seeds)):
+        print(f"seed{j}: {search.describe(metrics, j)}", flush=True)
+    for generation in range(1, args.gens + 1):
+        population = gv2.next_generation(population, metrics["cost"], rng, args.elite, search.mutate)
+        metrics = search.evaluate(population)
+        if generation % 5 == 0 or generation == args.gens:
+            best = int(np.argmin(metrics["cost"]))
+            print(f"gen {generation:3d}: {search.describe(metrics, best)} [{time.time() - start:.0f}s]", flush=True)
+        if time.time() - start > args.time_limit:
+            print(f"time limit reached at gen {generation}", flush=True)
             break
 
-    order = np.argsort(m["cost"])
-    seen, wrote = set(), 0
-    for i in order:
-        key = pop[i].tobytes()
-        if key in seen:
-            continue
-        seen.add(key)
-        out = list(fb)
-        for k in range(W):
-            sx, sy, b, t = (int(x) for x in pop[i][k])
-            out[R0 + k] = (b, t, sx / 7.0, sy / 7.0)
-        # keep the reference's frames after sim_to so the file carries the L2/L3 inputs too
-        out = out + [fr[f + a.tail_shift] for f in range(T + 1, len(fr) - max(a.tail_shift, 0))]
-        path = f"{a.out}_{wrote}.rkg"
-        open(path, "wb").write(bf.encode_rkg(c, ch, v, out, 0))
-        print(f"candidate {wrote}: {line(m, i)} -> {path}", flush=True)
-        wrote += 1
-        if wrote >= 6:
-            break
+    gv2.write_best_candidates(population, metrics["cost"], search.frames_of,
+                              lambda frames: bf.encode_rkg(search.course, search.character, search.vehicle, frames, 0),
+                              lambda i: search.describe(metrics, i), args.out)
     print("done", flush=True)
 
 

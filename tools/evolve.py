@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Population search over the whole stick sequence of the ride (default web 464 .. 662).
+"""(Yoshi Falls tool, kept as the original the gv2_* searches were built from; not used by them.)
+
+Population search over the whole stick sequence of the ride (default web 464 .. 662).
 
 A genome is one stick value (-7..+7) per row; buttons (hop, drift held, the mushroom press) come from the base run and are fixed.
 Every individual is played on the GPU from the state at the landing to the SMT release and scored by a penalty:
@@ -31,10 +33,7 @@ import cupy as cp  # noqa: E402
 import brute_force as bf  # noqa: E402
 from gpu_engine import Engine, make_inputs  # noqa: E402
 
-COLS = ("frame,stage,timerMs,raceFrame,px,py,pz,qx,qy,qz,qw,mqx,mqy,mqz,mqw,evx,evy,evz,ivx,ivy,ivz,"
-        "speed,speedRatio,driftState,mtCharge,hopStickX,kclSpeedFactor,flags,stickX,stickY,buttons,trick,"
-        "completion,checkpoint,lap,wrongWay,mushrooms").split(",")
-COL = {n: 1 + i for i, n in enumerate(COLS)}
+from gpu_engine import ROW_COLUMN as COL, ROW_COLUMN_NAMES as COLS  # noqa: E402,F401
 SMT = 117
 
 

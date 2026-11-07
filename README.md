@@ -24,11 +24,13 @@ build of the same code. Each search tool also writes its candidates as `.rkg` gh
 | `source/host/KBruteSystem.*`, `KDriveSystem.*` | `kinoko_host brute` (evaluate a whole input list) and `drive` (per-frame closed loop) |
 | `source/host/FrameState.cc`, `KReplaySystem.cc` | `kinoko_host replay --ghost X.rkg --dump X.csv`: one CSV row per frame (position, rotation, EV, completion, per-tire contact, ...) |
 | `tools/gpu_spike/` | the GPU port: copies Kinoko into `xsrc/` with C++20 rewrites, compiles it with NVRTC, and runs thousands of races in parallel |
-| `tools/brute_force.py`, `tools/kinoko_search.py`, `tools/evolve.py` | shared helpers: .rkg encode/decode, the CPU search wrapper, the generic GPU population search |
+| `tools/gv2_common.py` | **start here**: the terms the tools use (row, input frame, progress on the reference path), paths, and the shared code (GPU helpers, population search loop, path maths) |
+| `tools/brute_force.py`, `tools/kinoko_search.py` | .rkg encode/decode, and the wrapper for `kinoko_host search` |
+| `tools/evolve.py` | the earlier Yoshi Falls population search the gv2 searches were built from (kept for reference, not used by them) |
 | `tools/gv2_hit_evolve.py` | **the block-hit search**: edits stick inputs in a window before contact, scored on progress after the hit |
 | `tools/gv2_tail_evolve.py` | the follow-up search: fits the superhops after the hit, or chases the lap 2 entry |
 | `tools/gv2_verify.py`, `gv2_laps.py`, `gv2_metrics.py`, `gv2_hitcmp.py`, `gv2_splice.py`, `gv2_gpu_parity.py` | CPU replay checks, lap-line crossing times, yaw/EV/progress metrics, splicing, GPU vs CPU parity |
-| `tools/gv2_examples/*.sh` | real command lines used for the runs in SEARCH_RESULT.md |
+| `tools/gv2_examples/*.sh` | real command lines used for the runs in SEARCH_RESULT.md, and `regression_check.sh`: short fixed-seed runs of every tool to prove a code change didn't change results |
 | `samples/tracks/ghost-valley-2/ghosts/` | the community ghosts: the 27.818, the 28.165, slimpanda's PENDING lap 1, sircorvid's 20.444, sam's two lap 1 candidates |
 | `samples/tracks/ghost-valley-2/results/` | our candidates (`.rkg`) with input-edit CSVs in sam's format (input frame, race frame, orig vs new) |
 | `docs/GPU_PORT_GUIDE.md`, `docs/gpu_spike_results.md` | how the GPU port works and how it was verified |
@@ -81,7 +83,7 @@ The example scripts in `tools/gv2_examples/` start from earlier outputs under `r
 `cp samples/tracks/ghost-valley-2/results/* runs/gv2/`. Some intermediate seeds (`runs/gv2/_l2*`, `l2st*`) are not included, so
 the lap 2 scripts show the flags used rather than reproduce exactly.
 
-**Rows vs frames:** dump rows = rkg input frame + 171, and sam's "race frame" = input frame − 240. The L1 contact is around row 845.
+**Rows vs frames:** rkg input frame = dump row − 172, and sam's "race frame" = input frame − 240. (The dump's own `raceFrame` column is row − 171, one more.) The 27.818's L1 contact is row 846 = input frame 674 = race frame 434. `tools/gv2_common.py` explains all the terms the tools use.
 
 ## What the search does (and what we learned)
 
