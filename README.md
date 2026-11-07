@@ -1,145 +1,105 @@
-<div align="center">
-  <h1>Kinoko</h1>
-  <img src="https://github.com/vabold/Kinoko/assets/16770560/0e4ef63a-409a-40e4-8801-d30a27d7f7b5" width=100>
+# rGV2 Ultra block-hit brute force (Kinoko GPU search)
 
-  A reimplementation of Mario Kart Wii's physics engine in C++.
+> **Not the official Kinoko.** This repo is an unofficial copy of [Kinoko](https://github.com/vabold/Kinoko) by vabold and its
+> contributors (MIT), plus a web-player fork and the search tools described below. For Kinoko itself, use the upstream repo.
+> Kinoko's own README (building, extracting the game files) is kept at [docs/KINOKO_README.md](docs/KINOKO_README.md).
 
-[![Discord](https://img.shields.io/badge/Discord-grey?logo=discord)](https://discord.gg/qjt66ptQde)
-[![Doxygen](https://img.shields.io/badge/📚%20Docs-grey)](https://vabold.github.io/Kinoko/docs/html/index.html)
-</div>
-<hr/><br/>
+These are the tools used to re-find the "fast block hit" on SNES Ghost Valley 2 (Ultra shortcut, 3 laps,
+Funky Kong + Standard Bike L). Every run is replayed in Kinoko, the CPU engine on this branch or a bit-identical GPU
+build of the same code. Each search tool also writes its candidates as `.rkg` ghosts.
 
+**Status (2026-11-07):** this is work-in-progress research code, not a finished tool.
+- **Found:** a lap 1 that crosses the line **~1.28 frames earlier than the 27.818** (L1 ≈ 9.397 vs 9.418), CPU-verified.
+- **Not found:** the second bounce into the ultra shortcut at the start of lap 2. It looks as precise as the block hit itself.
+  So there is **no 3-lap time yet**.
+- **Not checked:** nothing has been checked in Dolphin yet. The block hit is precise to ~0.02 units, so an emulator check matters.
+- **Details:** what worked, what didn't, and every candidate are in `samples/tracks/ghost-valley-2/SEARCH_RESULT.md`.
+  The background (sam's method, the thread's lessons) is in `samples/tracks/ghost-valley-2/ANALYSIS.md`.
 
-Kinoko is a reimplementation of Mario Kart Wii's physics engine in C++. This project is a spiritual continuation of [stblr/Hanachan](https://github.com/stblr/Hanachan). Like Hanachan, the goal of this reimplementation is to reach perfectly accurate ghost replay.
+## What's here
 
-To see the current list of test cases and progress, visit [STATUS.md](STATUS.md).
+| Path | What it is |
+|---|---|
+| `source/host/KSearchSystem.*` | `kinoko_host search`: step / save / restore / state over stdin+stdout, the CPU reference for the GPU engine |
+| `source/host/KBruteSystem.*`, `KDriveSystem.*` | `kinoko_host brute` (evaluate a whole input list) and `drive` (per-frame closed loop) |
+| `source/host/FrameState.cc`, `KReplaySystem.cc` | `kinoko_host replay --ghost X.rkg --dump X.csv`: one CSV row per frame (position, rotation, EV, completion, per-tire contact, ...) |
+| `tools/gpu_spike/` | the GPU port: copies Kinoko into `xsrc/` with C++20 rewrites, compiles it with NVRTC, and runs thousands of races in parallel |
+| `tools/brute_force.py`, `tools/kinoko_search.py`, `tools/evolve.py` | shared helpers: .rkg encode/decode, the CPU search wrapper, the generic GPU population search |
+| `tools/gv2_hit_evolve.py` | **the block-hit search**: edits stick inputs in a window before contact, scored on progress after the hit |
+| `tools/gv2_tail_evolve.py` | the follow-up search: fits the superhops after the hit, or chases the lap 2 entry |
+| `tools/gv2_verify.py`, `gv2_laps.py`, `gv2_metrics.py`, `gv2_hitcmp.py`, `gv2_splice.py`, `gv2_gpu_parity.py` | CPU replay checks, lap-line crossing times, yaw/EV/progress metrics, splicing, GPU vs CPU parity |
+| `tools/gv2_examples/*.sh` | real command lines used for the runs in SEARCH_RESULT.md |
+| `samples/tracks/ghost-valley-2/ghosts/` | the community ghosts: the 27.818, the 28.165, slimpanda's PENDING lap 1, sircorvid's 20.444, sam's two lap 1 candidates |
+| `samples/tracks/ghost-valley-2/results/` | our candidates (`.rkg`) with input-edit CSVs in sam's format (input frame, race frame, orig vs new) |
+| `docs/GPU_PORT_GUIDE.md`, `docs/gpu_spike_results.md` | how the GPU port works and how it was verified |
 
-## Building
+## Requirements
 
-### Dependencies
+- **Game files:** your own Mario Kart Wii `Race/` folder next to the repo root (`Race/Common.szs`, `Race/Course/*.szs`), as in Kinoko's README.
+  Nothing from the game is in this branch.
+- **Native build:** a native (non-Emscripten) build of `kinoko_host`. The tools find it at `build-host-release/`, `build-host/` or `build/`,
+  or you can set `KINOKO_HOST=path/to/kinoko_host`.
+- **For the GPU search:**
+  - an NVIDIA GPU, plus Python 3.11 with `numpy` and CuPy (`pip install cupy-cuda12x`), which brings the NVRTC compiler;
+  - the target architecture is your first GPU's compute capability; set `KINOKO_GPU_ARCH=86` (etc.) to override it.
+  - Tested on Windows with an RTX 40-series card: about 1.6M race-frames/s with different inputs per race, against about 0.5M on a 12-core CPU.
 
-- g++ 13.1 (C++23)
-- ninja 1.3
-- Python 3.6
-- Mario Kart Wii disc
-
-### Extracting Files
-
-Kinoko relies on files from the base game to run, with the same paths relative to the executable. Dolphin is the preferred method of extracting these files.
-
-1. Make sure Mario Kart Wii is in the Dolphin game list. If it's not, click on Config, navigate to the Paths tab, and click "Add...". Find the folder Mario Kart Wii is in, and if needed, close out of the Config menu and click "Refresh".
-2. Right click Mario Kart Wii in the game tab, and click "Properties".
-3. Navigate to the "Filesystem" tab using the arrow keys in the top right of the properties window.
-4. If "Data Partition (0)" is not already open, click the arrow next to the name to open it.
-5. Right click on the "Race" folder, and click "Extract Files...".
-6. Select the folder the Kinoko executable is placed in. For developers, this is most commonly in the "out" folder after building the project.
-
-### Process
-
-Generate the ninja file and test case binary:
+## Setup
 
 ```bash
-./configure.py
+# 1. native build (any C++23 compiler; on Windows we used mingw-w64 + ninja)
+cmake -B build-host-release -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build-host-release --target kinoko_host
+
+# 2. GPU engine: copy the engine into xsrc/ with the C++20 rewrites, then compile to tools/gpu_spike/out/kinoko.cubin
+python tools/gpu_spike/transform.py
+python tools/gpu_spike/build_gpu.py
 ```
 
-Execute it:
+**Warning about step 2:** compiling the whole engine as a single unit with ptxas `-v` once crashed the author's PC, which had
+about 3.7 GB of RAM free. `build_gpu.py` now compiles file by file under a memory watchdog (~0.9 GB per file) and links at the end.
+Run it with a few GB free and nothing heavy open. Check with `python tools/mem.py` first.
+
+## Reproduce the lap 1 hit
 
 ```bash
-ninja
+# reference dump of the 27.818 (the GV2 tools read it)
+mkdir -p runs/gv2
+build-host-release/kinoko_host replay --ghost samples/tracks/ghost-valley-2/ghosts/rGV2_27.818_slimpanda_best.rkg --dump runs/gv2/gv2_27818.csv
+
+# the GPU must match the CPU on this track before you trust any search (expect 0 mismatches over 2080 frames)
+python tools/gv2_gpu_parity.py samples/tracks/ghost-valley-2/ghosts/rGV2_27.818_slimpanda_best.rkg runs/gv2/gv2_27818.csv
+
+# block-hit search on slimpanda's PENDING lap 1 (defaults = the settings that found hits A/D/E/F, ~5-25 min)
+python tools/gv2_hit_evolve.py --out runs/gv2/evoA --gens 150
+
+# CPU-verify the candidates: contact row, EV, yaw, progress vs the 27.818 at +20 f
+python tools/gv2_verify.py runs/gv2/evoA_0.rkg runs/gv2/evoA_1.rkg
 ```
 
-Run Kinoko:
+The example scripts in `tools/gv2_examples/` start from earlier outputs under `runs/gv2/`. To rerun them, copy those outputs in first:
+`cp samples/tracks/ghost-valley-2/results/* runs/gv2/`. Some intermediate seeds (`runs/gv2/_l2*`, `l2st*`) are not included, so
+the lap 2 scripts show the flags used rather than reproduce exactly.
 
-```
-cd out
-./kinoko test -s testCases.bin
-```
+**Rows vs frames:** dump rows = rkg input frame + 171, and sam's "race frame" = input frame − 240. The L1 contact is around row 845.
 
-## Replaying a Ghost
+## What the search does (and what we learned)
 
-The simplest use of Kinoko is to just determine whether or not a ghost finishes the race with the timer matching what is present in the ghost `.rkg` file header. To replay a ghost, you can run:
+`gv2_hit_evolve.py` is a (μ+λ) population search on the GPU, built along the lines the thread worked out with sam:
+- **Edits:** stick only, mostly vertical (`--p-y 0.8`), within a small budget (`--budget 10`). It edits from `--from-row`, and inputs from `--freeze-from` on are kept.
+- **Contact:** the hit must happen within `--contact-lo..hi`.
+- **Score:**
+  - progress along the 27.818's path 20 and 30 frames after contact (`--fwd-after`);
+  - plus capped EV and a bonus for right yaw ("right" = higher, less negative yaw);
+  - minus a **pace penalty** for being ahead of or behind the reference before contact (`--w-pace`). Without it, hits pull ahead and break the superhops;
+  - minus a lateral penalty for drifting off the reference path before contact.
 
-```
-./kinoko replay -g pathTo.rkg
-```
+What we learned is in SEARCH_RESULT.md:
+- The hit is reachable in only 3–7 stick edits.
+- Score after the hit decides the superhops more than score at the hit: hit A scored lower than E but gave the better lap 1.
+- sircorvid's earlier approach gets a +3.2 f hit that does not carry to the line.
+- The lap 2 entry (second bounce at ~row 1026, then the shortcut) is the open problem.
 
-## Creating New Test Cases
+## Licence
 
-When a ghost doesn't play back correctly, we want to be able to capture the exact frame that a desynchronization occurs, as well as gain insight as to what variables desynced. There are two ways to evaluate test cases in Kinoko. Both approaches require generating a `.krkg` file.
-
-### Create KRKG
-
-Test cases use a custom `.krkg` file format, which stores relevant in-game memory values to validate accuracy on every frame of a race. This file is generated using a custom version of MKW-SP.
-
-1. Navigate to the [workflows](https://github.com/vabold/mkw-sp/actions?query=branch%3Akrkg) page for the KRKG branch of [vabold/mkw-sp](https://github.com/vabold/mkw-sp).
-2. Download the `mkw-sp-test` artifact at the bottom of the page.
-3. Extract `boot.dol` to a folder of your choosing.
-4. In Dolphin, navigate to Config > Paths and set `Default ISO` to the path of your Mario Kart Wii PAL ISO.
-5. In Dolphin, click Open and select the extracted `boot.dol`.
-6. You should see some debug information printed on-screen and Mario Kart Wii should boot soon after.
-7. Watch a ghost replay of your choosing. After the ghost finishes and the screen fades to black, navigate to `[DolphinDir]\User\Wii\title\00010004\524d4345\data`. You should see a new file called `test.krkg`.
-
-### Approach 1: Creating a Test Suite
-
-Kinoko will iterate the array of test cases defined in `testCases.json`, each with the following format:
-
-```json
-"testCaseName": {
-    "rkgPath": "pathTo.rkg",
-    "krkgPath": "pathTo.krkg",
-    "targetFrame": 0
-}
-```
-
-`rkgPath` is the path to the game's native ghost file for the time trial you want to simulate. 
-
-`krkgPath` points to the krkg file generated in the previous section for this time trial ghost. 
-
-`targetFrame` is the number of frames to attempt sync for this ghost. Kinoko will throw an error if it is larger than the framecount stored in the krkg. If Kinoko reaches `targetFrame` while maintaining sync, then the test case will pass.
-
-To update the test binary after making changes to `testCases.json`, be sure to re-run:
-
-```
-./configure.py
-```
-
-### Approach 2: Testing a Single Ghost
-
-If you just want to test a single ghost, you can run:
-
-```
-./kinoko test -g pathTo.rkg -k pathTo.krkg [-f <target>]
-```
-
-In this scenario, Kinoko will validate the ghost to the specified *target* framecount. If no *target* is specified, the entire ghost will be validated.
-
-**NOTE:** If the *target* is 0 or larger than the total number of frames in the run then the entire ghost will be validated.
-
-## Interfacing
-
-While a GUI is not planned for the project at this time, contributors are welcome to add a graphics frontend under three conditions: the license must not change, it does not interfere with the CLI, and most importantly, it must **not** distribute any in-game assets.
-
-## Integrate Kinoko to your project
-You can link Kinoko to your own project using CMake by linking with the `libkinoko` target. For example:
-```cmake
-# add_subdirectory(kinoko)
-
-add_executable(example main.cpp)
-target_link_libraries(example libkinoko)
-```
-Note that any project using Kinoko's include directories will also require C++23.
-
-## Contributing
-
-The codebase uses C++ for the engine and Python for any external scripts.
-
-Pull requests resolving an issue or element of a tracking issue should reference the issue or item in the description.
-
-Any commits should be formatted using the project's clang-format file.
-
-## Resources
-
-- [Kinoko Discord](https://discord.gg/qjt66ptQde) - Discuss development, offer suggestions, and more!
-- [MKW-SP Discord](https://discord.gg/TPSKtyKgqD) - Request Ghidra server access and chat with contributors.
-- [Matching Decompilation](https://github.com/riidefi/mkw) - A repository that compiles back into the game's original assembly.
-- [Tockdom](http://wiki.tockdom.com/wiki/Main_Page) - A wiki maintained by multiple community members, most notably used for file formats.
+This branch is MIT, the same as Kinoko. The search code was written with Claude (Anthropic).

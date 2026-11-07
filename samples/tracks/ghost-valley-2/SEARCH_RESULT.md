@@ -1,6 +1,6 @@
 # rGV2 L1 fast block hit search on the PENDING ghost (2026-11-04)
 
-> On the `gv2-bruteforce` branch, the main candidates named `runs/gv2/<name>.rkg` (and their `_edits.csv`) are in `results/`, and community ghosts are in `ghosts/`. Logs and intermediate runs are not included. Setup and usage: `docs/GV2_BRUTEFORCE.md`.
+> On the `gv2-bruteforce` branch, the main candidates named `runs/gv2/<name>.rkg` (and their `_edits.csv`) are in `results/`, and community ghosts are in `ghosts/`. Logs and intermediate runs are not included. Setup and usage: the repo `README.md`.
 
 Base: `ghosts/rGV2_22.000_slimpanda_L1_with_L3_movement_PENDING.rkg`. Reference: `ghosts/rGV2_27.818_slimpanda_best.rkg`.
 Tools: `tools/gv2_hit_evolve.py` (GPU search), `tools/gv2_verify.py` (CPU replay + sam-format edit CSV), `tools/gv2_hitcmp.py`.
