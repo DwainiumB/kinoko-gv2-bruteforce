@@ -7,12 +7,6 @@ out
 *.szs
 statusTestCases.json
 .env
-# Everything under web/assets is derived from the game's own files (models, textures, sounds, music, Common.szs, course .szs,
-# UI art, effects, ...) and must never be committed or hosted. Each user generates it locally with tools/export_*.py and points
-# the page at it (web/assetgate.js).
-web/assets/
-web/*.bak
-web/replay_data.json
 
 # GPU spike build products
 tools/gpu_spike/xsrc/
@@ -22,7 +16,7 @@ build-gpu-spike/
 build-cov/
 build-*/
 
-# Local TAS-search tooling (kept on disk, not part of the web player repo)
+# Local TAS-search tooling (kept on disk, not part of this repo)
 tools/beam_search*.py
 tools/brute_gui*
 tools/dagger.py
@@ -38,9 +32,6 @@ tools/discord/
 tools/*.bak*
 tools/*.npz
 
-# The old Node/SSE relay; replaced by server/worker (Cloudflare Worker) and no longer compatible with web/online.js
-server/signal.js
-
 # Generated from the player's own kart archives by `kinoko_host item-anchors`; never committed.
 Race/Kart/driverItemAnchors.bin
 
@@ -53,8 +44,6 @@ Race/Kart/driverItemAnchors.bin
 /stop.flag
 /*.log
 /new 2.py
-web/*.zip
-web/index.html.bak-*
 *.bak-*
 samples/_editor_tmp.rkg
 

@@ -29,10 +29,7 @@ set(RK_INCLUDE_DIRS
 
 # Source files
 file(GLOB_RECURSE SOURCE_FILES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/**/*.cc)
-# server/worker holds a Node project (npm packages ship C++ sources of their own); it is not part of the engine
-list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/node_modules/.*")
 list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/host/main\\.cc$")
-list(FILTER SOURCE_FILES EXCLUDE REGEX ".*/host/web_bridge\\.cc$")
 
 add_library(libkinoko ${SOURCE_FILES})
 target_include_directories(libkinoko SYSTEM
@@ -40,24 +37,6 @@ target_include_directories(libkinoko SYSTEM
 )
 target_compile_options(libkinoko PRIVATE ${COMMON_CXX_FLAGS})
 target_compile_features(libkinoko PUBLIC cxx_std_23)
-
-# Web target
-add_executable(kinoko_web source/host/web_bridge.cc)
-target_link_libraries(kinoko_web libkinoko)
-target_compile_options(kinoko_web PRIVATE ${COMMON_CXX_FLAGS})
-
-if(EMSCRIPTEN)
-    target_link_options(kinoko_web PRIVATE
-        "-sMODULARIZE=1"
-        "-sEXPORT_NAME=KinokoModule"
-        "-sEXPORTED_RUNTIME_METHODS=['ccall','cwrap','FS','HEAPF32','HEAP32','HEAPU8','getValue']"
-        "-sEXPORTED_FUNCTIONS=['_main','_malloc','_free','_kinoko_init','_kinoko_set_input','_kinoko_step','_kinoko_get_kart_pos','_kinoko_get_kart_rot','_kinoko_get_kart_state','_kinoko_get_race_state','_kinoko_get_timing','_kinoko_init_ghost','_kinoko_get_input','_kinoko_get_guide_point','_kinoko_get_wheels','_kinoko_get_floor','_kinoko_get_object_count','_kinoko_get_objects','_kinoko_init_tas','_kinoko_save_state','_kinoko_load_state','_kinoko_free_state','_kinoko_free_all_states','_kinoko_state_dirty']"
-        "-sALLOW_MEMORY_GROWTH=1"
-        "-sFORCE_FILESYSTEM=1"
-        "-sNO_EXIT_RUNTIME=1"
-    )
-    set_target_properties(kinoko_web PROPERTIES SUFFIX ".js")
-endif()
 
 # Native host target: CLI modes (test/replay/brute) that don't need a browser, used for the
 # TAS brute-force search driver (tools/brute_force.py) among other things.

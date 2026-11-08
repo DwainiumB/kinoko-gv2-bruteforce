@@ -1,8 +1,11 @@
 # rGV2 Ultra block-hit brute force (Kinoko GPU search)
 
 > This repo is an unofficial copy of [Kinoko](https://github.com/vabold/Kinoko) by vabold, Malleo and its
-> contributors (MIT), plus a web-player fork and the search tools described below. For Kinoko itself, use the upstream repo.
+> contributors (MIT), plus the search tools described below. For Kinoko itself, use the upstream repo.
 > Kinoko's own README (building, extracting the game files) is kept at [docs/KINOKO_README.md](docs/KINOKO_README.md).
+>
+> The engine here comes from a fork that also ports items and VS-race code (`source/game/item/`, `KVersusSystem`, ...).
+> Time trials don't use that code, but every GV2 result below was verified on this engine, so it is kept as is.
 
 These are the tools used to re-find the "fast block hit" on SNES Ghost Valley 2 (Ultra shortcut, 3 laps,
 Funky Kong + Standard Bike L). Every run is replayed in Kinoko, the CPU engine on this branch or a bit-identical GPU
